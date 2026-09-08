@@ -1,0 +1,6 @@
+{
+  "name": "TurfBD",
+  "description": "TurfBD - Bangladesh's sports arena and turf booking platform with real-time slot booking, bKash & Nagad payments, user reviews, turf owner dashboard, and admin panel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
