@@ -1,10 +1,10 @@
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
-import { db } from '../db.js';
-import { uploads, turfs } from '../../db/schema.js';
+import { db } from '../../db/index.ts';
+import { uploads, turfs } from '../../db/schema.ts';
 import { eq } from 'drizzle-orm';
-import { requireAuth, requireOwner } from '../middleware/auth.js';
-import { processAndSaveImage, processAndSaveDocument } from '../utils/storage.js';
+import { requireAuth, requireOwner } from '../middleware/auth.ts';
+import { processAndSaveImage, processAndSaveDocument } from '../utils/storage.ts';
 
 export const uploadRouter = Router();
 
@@ -90,7 +90,7 @@ uploadRouter.post(
         const [uploadRecord] = await db
           .insert(uploads)
           .values({
-            uploadedBy: req.user!.userId,
+            uploadedBy: req.user!.id,
             turfId: turfId && !isNaN(turfId) ? turfId : null,
             category,
             originalName: processed.originalName,
@@ -125,7 +125,7 @@ uploadRouter.post(
 
           if (existingTurf) {
             // Verify ownership if not admin
-            if (req.user!.role !== 'admin' && existingTurf.ownerId !== req.user!.userId) {
+            if (req.user!.role !== 'admin' && existingTurf.ownerId !== req.user!.id) {
               continue;
             }
 
@@ -228,7 +228,7 @@ uploadRouter.post(
         const [uploadRecord] = await db
           .insert(uploads)
           .values({
-            uploadedBy: req.user!.userId,
+            uploadedBy: req.user!.id,
             turfId: turfId && !isNaN(turfId) ? turfId : null,
             category,
             originalName: processed.originalName,
@@ -317,7 +317,7 @@ uploadRouter.get('/', requireAuth, requireOwner, async (req: Request, res: Respo
       results = await db
         .select()
         .from(uploads)
-        .where(eq(uploads.uploadedBy, user.userId));
+        .where(eq(uploads.uploadedBy, user.id));
     }
 
     if (turfId && !isNaN(turfId)) {

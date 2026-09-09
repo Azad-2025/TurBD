@@ -91,7 +91,8 @@ export function generateAccessToken(user: { id: number; email: string; role: str
  * Generate Refresh Token (7 days) & persist to database
  */
 export async function generateRefreshToken(userId: number): Promise<string> {
-  const token = jwt.sign({ userId }, JWT_REFRESH_SECRET, {
+  const jti = crypto.randomUUID();
+  const token = jwt.sign({ userId, jti }, JWT_REFRESH_SECRET, {
     expiresIn: `${REFRESH_TOKEN_EXPIRY_DAYS}d`,
   });
 

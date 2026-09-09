@@ -22,6 +22,14 @@ export interface TurfAmenity {
   icon?: string;
 }
 
+export interface TurfDocument {
+  id?: number;
+  type: string;
+  url: string;
+  name: string;
+  uploadedAt?: string;
+}
+
 export interface Turf {
   id: string;
   name: string;
