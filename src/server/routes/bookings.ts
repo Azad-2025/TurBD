@@ -19,7 +19,7 @@ const generateBookingCode = () => {
 // GET /api/bookings - List bookings with rich relation data
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const { userId, turfId, status } = req.query;
+    const { userId, turfId, status, paymentStatus, date } = req.query;
 
     const allBookings = await db
       .select({
@@ -62,6 +62,12 @@ router.get('/', async (req: Request, res: Response) => {
     }
     if (status) {
       filtered = filtered.filter((b) => b.bookingStatus === status);
+    }
+    if (paymentStatus) {
+      filtered = filtered.filter((b) => b.paymentStatus === paymentStatus);
+    }
+    if (date) {
+      filtered = filtered.filter((b) => b.bookingDate === date);
     }
 
     return res.json(filtered);
@@ -197,9 +203,10 @@ router.patch('*', requireAuth);
 router.patch('/:id/status', async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
-    const { status } = req.body;
+    const { status, notes, paymentStatus } = req.body;
 
-    if (!status || !['pending_approval', 'confirmed', 'completed', 'cancelled'].includes(status)) {
+    const allowedStatuses = ['pending_approval', 'confirmed', 'completed', 'cancelled', 'cancellation_requested'];
+    if (status && !allowedStatuses.includes(status)) {
       return res.status(400).json({ error: 'Invalid booking status' });
     }
 
@@ -218,22 +225,33 @@ router.patch('/:id/status', async (req: Request, res: Response) => {
     // Authorization:
     // Admin: can update any booking
     // Owner: can manage bookings for their own turf only
-    // Customer: can only cancel their own booking
+    // Customer: can cancel or request cancellation of their own booking
     if (isAdmin || isOwnerOfTurf) {
       // Allowed
-    } else if (isBookingCustomer && status === 'cancelled') {
-      // Customer is allowed to cancel their own booking
+    } else if (isBookingCustomer && (status === 'cancelled' || status === 'cancellation_requested')) {
+      // Customer is allowed to cancel or request cancellation
     } else {
       return res.status(403).json({ error: 'Forbidden: You do not have permission to update this booking' });
     }
 
+    const updatePayload: any = {};
+    if (status) {
+      updatePayload.bookingStatus = status;
+    }
+    if (notes !== undefined) {
+      updatePayload.notes = typeof notes === 'object' ? JSON.stringify(notes) : String(notes);
+    }
+    if (paymentStatus && (isAdmin || isOwnerOfTurf)) {
+      updatePayload.paymentStatus = paymentStatus;
+    }
+
     const [updated] = await db
       .update(bookings)
-      .set({ bookingStatus: status })
+      .set(updatePayload)
       .where(eq(bookings.id, id))
       .returning();
 
-    // If cancelled, free up slot
+    // If cancelled, free up slot so it becomes available in real-time
     if (status === 'cancelled') {
       const [slotRecord] = await db
         .select()

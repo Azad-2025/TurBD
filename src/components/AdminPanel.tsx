@@ -15,8 +15,14 @@ import {
   ExternalLink,
   AlertTriangle,
   BarChart3,
+  Filter,
+  RefreshCw,
+  FileText,
+  Clock,
+  Phone,
 } from 'lucide-react';
 import { Turf, Booking, UserRole } from '../types';
+import { BookingDetailsModal } from './BookingDetailsModal';
 
 export const AdminPanel: React.FC = () => {
   const {
@@ -28,12 +34,22 @@ export const AdminPanel: React.FC = () => {
     updateTurf,
     switchRole,
     updateUserRole,
+    updateBookingStatus,
+    refreshBookings,
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<'pending-turfs' | 'all-turfs' | 'bookings' | 'users' | 'reports'>('pending-turfs');
   const [searchFilter, setSearchFilter] = useState('');
   const [reportData, setReportData] = useState<any>(null);
   const [loadingReport, setLoadingReport] = useState(false);
+
+  // Admin Bookings filter states
+  const [bookingDateFilter, setBookingDateFilter] = useState<string>('');
+  const [bookingTurfFilter, setBookingTurfFilter] = useState<string>('all');
+  const [bookingStatusFilter, setBookingStatusFilter] = useState<string>('all');
+  const [bookingPaymentFilter, setBookingPaymentFilter] = useState<string>('all');
+  const [bookingSearchQuery, setBookingSearchQuery] = useState<string>('');
+  const [selectedBookingForDetails, setSelectedBookingForDetails] = useState<Booking | null>(null);
 
   useEffect(() => {
     if (activeTab === 'reports') {
@@ -375,59 +391,318 @@ export const AdminPanel: React.FC = () => {
 
       {/* GLOBAL BOOKINGS AUDIT */}
       {activeTab === 'bookings' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-base font-bold text-white">Global Match Transactions Audit</h3>
-            <span className="text-xs text-neutral-400">All bookings across Bangladesh</span>
+        <div className="space-y-5" id="admin-bookings-section">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-purple-400" />
+                <span>Global Match Bookings & Financial Audit</span>
+              </h3>
+              <p className="text-xs text-neutral-400 mt-0.5">
+                Monitor all turf bookings across Bangladesh with real-time filters by Date, Arena, Status, and Payment condition.
+              </p>
+            </div>
+
+            <button
+              onClick={() => refreshBookings()}
+              className="px-3 py-1.5 bg-neutral-900 border border-neutral-800 hover:bg-neutral-850 text-neutral-300 text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer self-start sm:self-auto"
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-purple-400" />
+              <span>Refresh Records</span>
+            </button>
           </div>
 
-          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-neutral-800 text-neutral-400 bg-neutral-850/50">
-                  <th className="p-3.5 font-semibold">Pass ID</th>
-                  <th className="p-3.5 font-semibold">Venue</th>
-                  <th className="p-3.5 font-semibold">Booker</th>
-                  <th className="p-3.5 font-semibold">Date & Time</th>
-                  <th className="p-3.5 font-semibold">Fee / Advance</th>
-                  <th className="p-3.5 font-semibold">Method & Trx ID</th>
-                  <th className="p-3.5 font-semibold">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-800">
-                {bookings.map((b) => (
-                  <tr key={b.id} className="hover:bg-neutral-850/40">
-                    <td className="p-3.5 font-mono font-bold text-emerald-400">#{b.bookingCode}</td>
-                    <td className="p-3.5 font-semibold text-white">{b.turfName}</td>
-                    <td className="p-3.5 text-neutral-300">
-                      <div>{b.userName}</div>
-                      <div className="text-[10px] text-neutral-500">{b.userPhone}</div>
-                    </td>
-                    <td className="p-3.5 text-neutral-300">
-                      <div>{b.date}</div>
-                      <div className="text-[10px] font-mono text-emerald-400">{b.startTime} - {b.endTime}</div>
-                    </td>
-                    <td className="p-3.5">
-                      <div className="font-mono text-white font-semibold">৳{b.totalAmount}</div>
-                      <div className="text-[10px] text-emerald-400">Paid: ৳{b.advancePaid}</div>
-                    </td>
-                    <td className="p-3.5 text-neutral-300">
-                      <div className="uppercase font-bold text-xs">{b.paymentMethod}</div>
-                      <div className="text-[10px] font-mono text-neutral-400">{b.transactionId || 'CASH'}</div>
-                    </td>
-                    <td className="p-3.5">
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                        b.status === 'confirmed' ? 'bg-emerald-500/20 text-emerald-400' :
-                        b.status === 'pending_approval' ? 'bg-amber-500/20 text-amber-400' : 'bg-neutral-800 text-neutral-500'
-                      }`}>
-                        {b.status.replace('_', ' ')}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {/* FILTER BAR: Date, Turf, Status, Payment Status & Search */}
+          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4 sm:p-5 space-y-3">
+            <div className="flex items-center gap-2 text-xs font-bold text-neutral-300">
+              <Filter className="w-4 h-4 text-purple-400" />
+              <span>Filter Bookings:</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+              {/* Date Filter */}
+              <div>
+                <label className="block text-[11px] font-semibold text-neutral-400 mb-1">Match Date</label>
+                <div className="relative">
+                  <input
+                    type="date"
+                    value={bookingDateFilter}
+                    onChange={(e) => setBookingDateFilter(e.target.value)}
+                    className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-2.5 py-1.5 text-xs text-white"
+                  />
+                  {bookingDateFilter && (
+                    <button
+                      onClick={() => setBookingDateFilter('')}
+                      className="absolute right-2 top-1.5 text-[10px] text-neutral-400 hover:text-white"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Turf Filter */}
+              <div>
+                <label className="block text-[11px] font-semibold text-neutral-400 mb-1">Turf Arena</label>
+                <select
+                  value={bookingTurfFilter}
+                  onChange={(e) => setBookingTurfFilter(e.target.value)}
+                  className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-2.5 py-1.5 text-xs text-white"
+                >
+                  <option value="all">All Arenas ({turfs.length})</option>
+                  {turfs.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} ({t.city})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Status Filter */}
+              <div>
+                <label className="block text-[11px] font-semibold text-neutral-400 mb-1">Booking Status</label>
+                <select
+                  value={bookingStatusFilter}
+                  onChange={(e) => setBookingStatusFilter(e.target.value)}
+                  className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-2.5 py-1.5 text-xs text-white"
+                >
+                  <option value="all">All Statuses</option>
+                  <option value="confirmed">Confirmed</option>
+                  <option value="pending_approval">Pending Approval</option>
+                  <option value="cancellation_requested">Cancellation Requested</option>
+                  <option value="completed">Completed</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+              </div>
+
+              {/* Payment Status Filter */}
+              <div>
+                <label className="block text-[11px] font-semibold text-neutral-400 mb-1">Payment Status</label>
+                <select
+                  value={bookingPaymentFilter}
+                  onChange={(e) => setBookingPaymentFilter(e.target.value)}
+                  className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-2.5 py-1.5 text-xs text-white"
+                >
+                  <option value="all">All Payment States</option>
+                  <option value="fully_paid">Fully Paid (100%)</option>
+                  <option value="advance_paid">Partially Paid (Advance)</option>
+                  <option value="due_pending">Due at Pitch (&gt; ৳0)</option>
+                  <option value="refunded">Refund Processed</option>
+                  <option value="refund_pending">Refund In Review</option>
+                </select>
+              </div>
+
+              {/* Keyword Search */}
+              <div>
+                <label className="block text-[11px] font-semibold text-neutral-400 mb-1">Search Keywords</label>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-neutral-500 absolute left-2.5 top-2.5" />
+                  <input
+                    type="text"
+                    value={bookingSearchQuery}
+                    onChange={(e) => setBookingSearchQuery(e.target.value)}
+                    placeholder="Pass #, name, phone, trx..."
+                    className="w-full bg-neutral-800 border border-neutral-700 rounded-xl pl-8 pr-2.5 py-1.5 text-xs text-white"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
+
+          {/* Filtered Results Stats */}
+          {(() => {
+            const filteredBookings = bookings.filter((b) => {
+              // Date filter
+              if (bookingDateFilter && b.date !== bookingDateFilter) return false;
+              // Turf filter
+              if (bookingTurfFilter !== 'all' && b.turfId !== bookingTurfFilter) return false;
+              // Status filter
+              if (bookingStatusFilter !== 'all' && b.status !== bookingStatusFilter) return false;
+              // Payment Status filter
+              if (bookingPaymentFilter === 'fully_paid' && b.dueAmount > 0) return false;
+              if (bookingPaymentFilter === 'advance_paid' && (b.dueAmount === 0 || b.advancePaid === 0)) return false;
+              if (bookingPaymentFilter === 'due_pending' && b.dueAmount <= 0) return false;
+              if (bookingPaymentFilter === 'refunded' && b.refundStatus !== 'refunded') return false;
+              if (bookingPaymentFilter === 'refund_pending' && b.status !== 'cancellation_requested') return false;
+              // Search query
+              if (bookingSearchQuery.trim()) {
+                const q = bookingSearchQuery.toLowerCase();
+                const matchCode = b.bookingCode?.toLowerCase().includes(q);
+                const matchName = b.userName?.toLowerCase().includes(q);
+                const matchPhone = b.userPhone?.toLowerCase().includes(q);
+                const matchTrx = b.transactionId?.toLowerCase().includes(q);
+                const matchTurf = b.turfName?.toLowerCase().includes(q);
+                if (!matchCode && !matchName && !matchPhone && !matchTrx && !matchTurf) return false;
+              }
+              return true;
+            });
+
+            const filteredGross = filteredBookings
+              .filter((b) => b.status !== 'cancelled')
+              .reduce((acc, b) => acc + b.totalAmount, 0);
+
+            const filteredAdvance = filteredBookings
+              .filter((b) => b.status !== 'cancelled')
+              .reduce((acc, b) => acc + b.advancePaid, 0);
+
+            const filteredDue = filteredBookings
+              .filter((b) => b.status !== 'cancelled')
+              .reduce((acc, b) => acc + b.dueAmount, 0);
+
+            return (
+              <>
+                {/* Micro KPI Strip */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-3">
+                    <div className="text-[10px] uppercase font-bold text-neutral-400">Matches Found</div>
+                    <div className="text-lg font-black text-white">{filteredBookings.length}</div>
+                  </div>
+                  <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-3">
+                    <div className="text-[10px] uppercase font-bold text-neutral-400">Total Booking Value</div>
+                    <div className="text-lg font-black text-emerald-400 font-mono">৳{filteredGross.toLocaleString()}</div>
+                  </div>
+                  <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-3">
+                    <div className="text-[10px] uppercase font-bold text-neutral-400">Advance Paid</div>
+                    <div className="text-lg font-black text-emerald-300 font-mono">৳{filteredAdvance.toLocaleString()}</div>
+                  </div>
+                  <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-3">
+                    <div className="text-[10px] uppercase font-bold text-neutral-400">Pending Ground Due</div>
+                    <div className="text-lg font-black text-amber-400 font-mono">৳{filteredDue.toLocaleString()}</div>
+                  </div>
+                </div>
+
+                {/* Table */}
+                <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-x-auto shadow-sm">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-neutral-800 text-neutral-400 bg-neutral-850/50">
+                        <th className="p-3.5 font-semibold">Pass ID</th>
+                        <th className="p-3.5 font-semibold">Arena / Venue</th>
+                        <th className="p-3.5 font-semibold">Booker</th>
+                        <th className="p-3.5 font-semibold">Match Schedule</th>
+                        <th className="p-3.5 font-semibold">Fee / Advance / Due</th>
+                        <th className="p-3.5 font-semibold">MFS & Trx ID</th>
+                        <th className="p-3.5 font-semibold">Status</th>
+                        <th className="p-3.5 font-semibold">Audit Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-800">
+                      {filteredBookings.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="p-8 text-center text-neutral-500">
+                            No match bookings match your current filter parameters.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredBookings.map((b) => (
+                          <tr key={b.id} className="hover:bg-neutral-850/40 transition-colors">
+                            <td className="p-3.5 font-mono font-bold text-emerald-400 whitespace-nowrap">
+                              #{b.bookingCode}
+                            </td>
+                            <td className="p-3.5 font-semibold text-white">
+                              <div>{b.turfName}</div>
+                              <div className="text-[10px] text-neutral-400 font-normal">
+                                {b.turfArea}, {b.turfCity}
+                              </div>
+                            </td>
+                            <td className="p-3.5 text-neutral-300">
+                              <div className="font-semibold text-white">{b.userName}</div>
+                              <div className="text-[10px] text-neutral-400">{b.userPhone}</div>
+                            </td>
+                            <td className="p-3.5 text-neutral-300 whitespace-nowrap">
+                              <div className="font-semibold">{b.date}</div>
+                              <div className="text-[10px] font-mono text-emerald-400">
+                                {b.startTime} - {b.endTime} ({b.durationHours}h)
+                              </div>
+                            </td>
+                            <td className="p-3.5 whitespace-nowrap">
+                              <div className="font-mono text-white font-semibold">৳{b.totalAmount}</div>
+                              <div className="text-[10px] text-emerald-400">Paid: ৳{b.advancePaid}</div>
+                              {b.dueAmount > 0 ? (
+                                <div className="text-[10px] text-amber-400 font-semibold">Due: ৳{b.dueAmount}</div>
+                              ) : (
+                                <div className="text-[10px] text-neutral-500">Fully Paid</div>
+                              )}
+                            </td>
+                            <td className="p-3.5 text-neutral-300 whitespace-nowrap">
+                              <div className="uppercase font-bold text-xs">{b.paymentMethod}</div>
+                              <div className="text-[10px] font-mono text-neutral-400">
+                                {b.transactionId || 'CASH AT DESK'}
+                              </div>
+                              {b.refundStatus && (
+                                <div
+                                  className={`text-[9px] font-bold uppercase mt-0.5 ${
+                                    b.refundStatus === 'refunded' ? 'text-emerald-400' : 'text-amber-400'
+                                  }`}
+                                >
+                                  Refund: {b.refundStatus}
+                                </div>
+                              )}
+                            </td>
+                            <td className="p-3.5 whitespace-nowrap">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                  b.status === 'confirmed'
+                                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                    : b.status === 'pending_approval'
+                                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                    : b.status === 'cancellation_requested'
+                                    ? 'bg-red-500/25 text-red-300 border border-red-500/40 animate-pulse'
+                                    : b.status === 'completed'
+                                    ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                                    : 'bg-neutral-800 text-neutral-400'
+                                }`}
+                              >
+                                {b.status === 'cancellation_requested' ? 'Cancel Requested' : b.status.replace('_', ' ')}
+                              </span>
+                            </td>
+                            <td className="p-3.5 whitespace-nowrap">
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={() => setSelectedBookingForDetails(b)}
+                                  className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 rounded-lg text-[10px] font-bold flex items-center gap-1 border border-neutral-700 transition-colors cursor-pointer"
+                                  title="View Digital Pass & Full Breakdown"
+                                >
+                                  <FileText className="w-3 h-3 text-purple-400" />
+                                  <span>Details</span>
+                                </button>
+
+                                {b.status === 'cancellation_requested' && (
+                                  <button
+                                    onClick={() => {
+                                      if (confirm(`Approve cancellation and refund ৳${b.advancePaid} to ${b.userName}?`)) {
+                                        updateBookingStatus(b.id, 'cancelled', {
+                                          refundStatus: 'refunded',
+                                          refundAmount: b.advancePaid,
+                                          notes: 'Refund approved by TurfBD Super Admin',
+                                        });
+                                      }
+                                    }}
+                                    className="px-2 py-1 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
+                                  >
+                                    Refund
+                                  </button>
+                                )}
+
+                                <a
+                                  href={`tel:${b.userPhone}`}
+                                  className="p-1 text-neutral-400 hover:text-emerald-400 hover:bg-neutral-800 rounded transition-colors"
+                                  title="Call user"
+                                >
+                                  <Phone className="w-3.5 h-3.5" />
+                                </a>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
 
@@ -564,6 +839,16 @@ export const AdminPanel: React.FC = () => {
             </div>
           )}
         </div>
+      )}
+
+      {/* Admin Booking Details & Voucher Modal */}
+      {selectedBookingForDetails && (
+        <BookingDetailsModal
+          booking={selectedBookingForDetails}
+          turf={turfs.find((t) => t.id === selectedBookingForDetails.turfId)}
+          onClose={() => setSelectedBookingForDetails(null)}
+          canManage={true}
+        />
       )}
     </div>
   );

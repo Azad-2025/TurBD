@@ -81,7 +81,7 @@ router.get('/', async (req: Request, res: Response) => {
 // POST /api/slots/toggle-block - Block or unblock a slot for maintenance (Owner manages own turf only)
 router.post('/toggle-block', requireOwner, async (req: Request, res: Response) => {
   try {
-    const { turfId, date, startTime, endTime } = req.body;
+    const { turfId, date, startTime, endTime, status } = req.body;
 
     if (!turfId || !date || !startTime) {
       return res.status(400).json({ error: 'turfId, date, and startTime are required' });
@@ -106,7 +106,7 @@ router.post('/toggle-block', requireOwner, async (req: Request, res: Response) =
       .where(and(eq(slots.turfId, Number(turfId)), eq(slots.date, date), eq(slots.startTime, startTime)));
 
     if (existing) {
-      const newStatus = existing.status === 'blocked' ? 'available' : 'blocked';
+      const newStatus = status || (existing.status === 'blocked' ? 'available' : 'blocked');
       const [updated] = await db
         .update(slots)
         .set({ status: newStatus })
@@ -114,6 +114,7 @@ router.post('/toggle-block', requireOwner, async (req: Request, res: Response) =
         .returning();
       return res.json(updated);
     } else {
+      const newStatus = status || 'blocked';
       const [newSlot] = await db
         .insert(slots)
         .values({
@@ -121,7 +122,7 @@ router.post('/toggle-block', requireOwner, async (req: Request, res: Response) =
           date,
           startTime,
           endTime: calculatedEndTime,
-          status: 'blocked',
+          status: newStatus,
         })
         .returning();
       return res.status(201).json(newSlot);

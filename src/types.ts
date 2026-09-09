@@ -60,7 +60,7 @@ export interface Turf {
   isFeatured?: boolean;
 }
 
-export type SlotStatus = 'available' | 'booked' | 'maintenance' | 'selected';
+export type SlotStatus = 'available' | 'booked' | 'blocked' | 'maintenance' | 'selected';
 
 export interface Slot {
   id: string;
@@ -72,10 +72,40 @@ export interface Slot {
   status: SlotStatus;
 }
 
-export type PaymentMethod = 'bkash' | 'nagad' | 'rocket' | 'cash_on_field';
+export type PaymentMethod = 'bkash' | 'nagad' | 'sslcommerz' | 'rocket' | 'cash_on_field';
 export type PaymentType = 'full' | 'advance';
-export type PaymentStatus = 'paid' | 'partial' | 'pending_field_payment';
-export type BookingStatus = 'confirmed' | 'pending_approval' | 'cancelled' | 'completed';
+export type PaymentStatus =
+  | 'pending'
+  | 'initiated'
+  | 'successful'
+  | 'paid'
+  | 'partial'
+  | 'partially_paid'
+  | 'failed'
+  | 'cancelled'
+  | 'refunded'
+  | 'pending_field_payment';
+export type BookingStatus = 'confirmed' | 'pending_approval' | 'cancelled' | 'cancellation_requested' | 'completed';
+
+export interface PaymentTransaction {
+  id: string | number;
+  bookingId: string | number;
+  bookingCode?: string;
+  turfId?: string | number;
+  turfName?: string;
+  userId?: string | number;
+  userName?: string;
+  userPhone?: string;
+  method: PaymentMethod;
+  transactionId: string;
+  amount: number;
+  status: PaymentStatus;
+  createdAt: string;
+  bookingDate?: string;
+  startTime?: string;
+  endTime?: string;
+  notes?: string;
+}
 
 export interface Booking {
   id: string;
@@ -102,6 +132,9 @@ export interface Booking {
   status: BookingStatus;
   createdAt: string;
   notes?: string;
+  cancellationReason?: string;
+  refundStatus?: 'none' | 'pending' | 'approved' | 'refunded' | 'rejected';
+  refundAmount?: number;
 }
 
 export interface Review {

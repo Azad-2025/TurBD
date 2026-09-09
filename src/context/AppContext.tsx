@@ -36,7 +36,7 @@ interface AppContextType {
   setSearchFilters: React.Dispatch<React.SetStateAction<SearchFilters>>;
   resetFilters: () => void;
   blockedSlots: Record<string, boolean>; // key: `${turfId}_${date}_${time}`
-  toggleSlotBlock: (turfId: string, date: string, time: string) => void;
+  toggleSlotBlock: (turfId: string, date: string, time: string, status?: string) => Promise<void>;
 
   // Actions connected to PostgreSQL API
   login: (email: string, password?: string) => Promise<boolean>;
@@ -53,7 +53,12 @@ interface AppContextType {
   updateTurf: (id: string, updates: Partial<Turf>) => Promise<void>;
   setTurfStatus: (id: string, status: 'approved' | 'rejected') => Promise<void>;
   createBooking: (bookingData: Omit<Booking, 'id' | 'bookingCode' | 'createdAt'>) => Promise<Booking>;
-  updateBookingStatus: (bookingId: string, status: BookingStatus) => Promise<void>;
+  updateBookingStatus: (
+    bookingId: string,
+    status: BookingStatus,
+    extra?: { notes?: any; cancellationReason?: string; refundStatus?: any; paymentStatus?: string }
+  ) => Promise<void>;
+  refreshBookings: (filters?: { userId?: string; turfId?: string; status?: string; paymentStatus?: string; date?: string }) => Promise<void>;
   addReview: (turfId: string, rating: number, comment: string) => Promise<void>;
   addOwnerReply: (reviewId: string, comment: string) => Promise<void>;
   updateUserRole: (userId: string, role: UserRole) => Promise<void>;
@@ -279,15 +284,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const toggleSlotBlock = async (turfId: string, date: string, time: string) => {
+  const toggleSlotBlock = async (turfId: string, date: string, time: string, status?: string) => {
     const key = `${turfId}_${date}_${time}`;
     setBlockedSlots((prev) => ({
       ...prev,
-      [key]: !prev[key],
+      [key]: status ? (status === 'available' ? false : true) : !prev[key],
     }));
 
     try {
-      await api.toggleSlotBlock(turfId, date, time);
+      await api.toggleSlotBlock(turfId, date, time, status);
     } catch (err) {
       console.error('Failed to persist slot block:', err);
     }
@@ -361,11 +366,64 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const updateBookingStatus = async (bookingId: string, status: BookingStatus) => {
+  const updateBookingStatus = async (
+    bookingId: string,
+    status: BookingStatus,
+    extra?: { notes?: any; cancellationReason?: string; refundStatus?: any; paymentStatus?: string }
+  ) => {
     setBookings((prev) =>
-      prev.map((b) => (b.id === bookingId ? { ...b, status } : b))
+      prev.map((b) => {
+        if (b.id === bookingId) {
+          return {
+            ...b,
+            status,
+            ...(extra?.notes ? { notes: typeof extra.notes === 'string' ? extra.notes : JSON.stringify(extra.notes) } : {}),
+            ...(extra?.cancellationReason ? { cancellationReason: extra.cancellationReason } : {}),
+            ...(extra?.refundStatus ? { refundStatus: extra.refundStatus } : {}),
+            ...(extra?.paymentStatus ? { paymentStatus: extra.paymentStatus as any } : {}),
+          };
+        }
+        return b;
+      })
     );
-    await api.updateBookingStatus(bookingId, status).catch(console.error);
+
+    let notesToSend: any = undefined;
+    if (extra?.notes || extra?.cancellationReason || extra?.refundStatus) {
+      notesToSend = {
+        notes: typeof extra.notes === 'string' ? extra.notes : undefined,
+        cancellationReason: extra.cancellationReason,
+        refundStatus: extra.refundStatus,
+        refundAmount: status === 'cancelled' ? undefined : undefined,
+      };
+    }
+
+    await api
+      .updateBookingStatus(bookingId, status, {
+        notes: notesToSend,
+        paymentStatus: extra?.paymentStatus,
+      })
+      .catch(console.error);
+
+    // Also reload bookings to sync fresh data
+    try {
+      const fresh = await api.getBookings();
+      if (fresh && fresh.length > 0) {
+        setBookings(fresh);
+      }
+    } catch (e) {
+      // Ignored
+    }
+  };
+
+  const refreshBookings = async (filters?: { userId?: string; turfId?: string; status?: string; paymentStatus?: string; date?: string }) => {
+    try {
+      const fresh = await api.getBookings(filters);
+      if (fresh) {
+        setBookings(fresh);
+      }
+    } catch (e) {
+      console.error('Failed to refresh bookings:', e);
+    }
   };
 
   const addReview = async (turfId: string, rating: number, comment: string) => {
@@ -451,6 +509,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setTurfStatus,
         createBooking,
         updateBookingStatus,
+        refreshBookings,
         addReview,
         addOwnerReply,
         updateUserRole,

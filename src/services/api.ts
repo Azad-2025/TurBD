@@ -402,11 +402,11 @@ export const api = {
     return res.json();
   },
 
-  async toggleSlotBlock(turfId: string, date: string, startTime: string): Promise<void> {
+  async toggleSlotBlock(turfId: string, date: string, startTime: string, status?: string): Promise<void> {
     const res = await fetch(`${API_BASE}/slots/toggle-block`, {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ turfId: Number(turfId), date, startTime }),
+      body: JSON.stringify({ turfId: Number(turfId), date, startTime, status }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -415,35 +415,67 @@ export const api = {
   },
 
   // Bookings
-  async getBookings(): Promise<Booking[]> {
-    const res = await fetch(`${API_BASE}/bookings`);
+  async getBookings(filters?: { userId?: string; turfId?: string; status?: string; paymentStatus?: string; date?: string }): Promise<Booking[]> {
+    const params = new URLSearchParams();
+    if (filters?.userId) params.append('userId', filters.userId);
+    if (filters?.turfId) params.append('turfId', filters.turfId);
+    if (filters?.status && filters.status !== 'all') params.append('status', filters.status);
+    if (filters?.paymentStatus && filters.paymentStatus !== 'all') params.append('paymentStatus', filters.paymentStatus);
+    if (filters?.date) params.append('date', filters.date);
+
+    const url = params.toString() ? `${API_BASE}/bookings?${params.toString()}` : `${API_BASE}/bookings`;
+    const res = await fetch(url);
     if (!res.ok) return [];
     const data = await res.json();
-    return data.map((b: any) => ({
-      id: String(b.id),
-      bookingCode: b.bookingCode,
-      turfId: String(b.turfId),
-      turfName: b.turfName || 'Arena',
-      turfArea: b.turfArea || 'Dhaka',
-      turfCity: b.turfCity || 'Dhaka',
-      userId: String(b.userId),
-      userName: b.userName || 'Player',
-      userPhone: b.userPhone || '+880 1700-000000',
-      userEmail: b.userEmail || 'player@turfbd.com',
-      date: b.bookingDate,
-      startTime: b.startTime,
-      endTime: b.endTime,
-      durationHours: 1,
-      sport: 'football',
-      totalAmount: b.amount,
-      advancePaid: b.advancePaid,
-      dueAmount: b.dueAmount,
-      paymentMethod: 'bkash',
-      paymentStatus: b.paymentStatus,
-      status: b.bookingStatus,
-      createdAt: b.createdAt,
-      notes: b.notes,
-    }));
+    return data.map((b: any) => {
+      let notesText = b.notes || '';
+      let cancellationReason: string | undefined = undefined;
+      let refundStatus: any = b.bookingStatus === 'cancelled' ? 'refunded' : b.bookingStatus === 'cancellation_requested' ? 'pending' : 'none';
+      let refundAmount: number | undefined = b.bookingStatus === 'cancelled' ? b.advancePaid : undefined;
+
+      if (b.notes) {
+        try {
+          const parsed = JSON.parse(b.notes);
+          if (parsed && typeof parsed === 'object') {
+            notesText = parsed.notes || parsed.teamNotes || '';
+            cancellationReason = parsed.cancellationReason || parsed.reason;
+            if (parsed.refundStatus) refundStatus = parsed.refundStatus;
+            if (parsed.refundAmount) refundAmount = parsed.refundAmount;
+          }
+        } catch {
+          // Plain text notes
+        }
+      }
+
+      return {
+        id: String(b.id),
+        bookingCode: b.bookingCode,
+        turfId: String(b.turfId),
+        turfName: b.turfName || 'Arena',
+        turfArea: b.turfArea || 'Dhaka',
+        turfCity: b.turfCity || 'Dhaka',
+        userId: String(b.userId),
+        userName: b.userName || 'Player',
+        userPhone: b.userPhone || '+880 1700-000000',
+        userEmail: b.userEmail || 'player@turfbd.com',
+        date: b.bookingDate,
+        startTime: b.startTime,
+        endTime: b.endTime,
+        durationHours: 1,
+        sport: 'football',
+        totalAmount: b.amount,
+        advancePaid: b.advancePaid,
+        dueAmount: b.dueAmount,
+        paymentMethod: 'bkash',
+        paymentStatus: b.paymentStatus,
+        status: b.bookingStatus,
+        createdAt: b.createdAt,
+        notes: notesText,
+        cancellationReason,
+        refundStatus,
+        refundAmount,
+      };
+    });
   },
 
   async createBooking(data: {
@@ -502,14 +534,23 @@ export const api = {
       status: b.bookingStatus,
       createdAt: b.createdAt,
       notes: b.notes,
+      refundStatus: 'none',
     };
   },
 
-  async updateBookingStatus(bookingId: string, status: string): Promise<void> {
+  async updateBookingStatus(
+    bookingId: string,
+    status: string,
+    extra?: { notes?: any; paymentStatus?: string }
+  ): Promise<void> {
+    const payload: any = { status };
+    if (extra?.notes !== undefined) payload.notes = extra.notes;
+    if (extra?.paymentStatus !== undefined) payload.paymentStatus = extra.paymentStatus;
+
     const res = await fetch(`${API_BASE}/bookings/${bookingId}/status`, {
       method: 'PATCH',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ status }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -584,6 +625,158 @@ export const api = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Failed to fetch admin reports');
+    }
+    return res.json();
+  },
+
+  // Payment Gateway Integrations (bKash, Nagad, SSLCommerz)
+  async initiatePayment(data: {
+    bookingId: string | number;
+    gateway: string;
+    isAdvanceOnly?: boolean;
+    customerName?: string;
+    customerPhone?: string;
+    customerEmail?: string;
+  }): Promise<{
+    success: boolean;
+    paymentId: number;
+    bookingId: number;
+    bookingCode: string;
+    amount: number;
+    currency: string;
+    gateway: string;
+    redirectUrl: string;
+    gatewayPaymentId: string;
+    expiresAt: string;
+  }> {
+    const res = await fetch(`${API_BASE}/payments/initiate`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to initiate payment');
+    }
+    return res.json();
+  },
+
+  async verifyPayment(data: {
+    paymentId?: number;
+    bookingId?: number;
+    gateway?: string;
+    transactionId?: string;
+    valId?: string;
+    paymentRefId?: string;
+    amount?: number;
+  }): Promise<{
+    success: boolean;
+    verified: boolean;
+    status: string;
+    payment: any;
+    booking: any;
+    message?: string;
+  }> {
+    const res = await fetch(`${API_BASE}/payments/verify`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Payment verification failed');
+    }
+    return res.json();
+  },
+
+  async refundPayment(data: {
+    paymentId: number;
+    amount?: number;
+    reason?: string;
+  }): Promise<{
+    success: boolean;
+    refundTrxId: string;
+    payment: any;
+    booking: any;
+    message?: string;
+  }> {
+    const res = await fetch(`${API_BASE}/payments/refund`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to process refund');
+    }
+    return res.json();
+  },
+
+  async getPayments(filters?: {
+    status?: string;
+    method?: string;
+    turfId?: string;
+    userId?: string;
+  }): Promise<any[]> {
+    const params = new URLSearchParams();
+    if (filters?.status) params.append('status', filters.status);
+    if (filters?.method) params.append('method', filters.method);
+    if (filters?.turfId) params.append('turfId', filters.turfId);
+    if (filters?.userId) params.append('userId', filters.userId);
+
+    const res = await fetch(`${API_BASE}/payments?${params.toString()}`, {
+      headers: getAuthHeaders(false),
+    });
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async getOwnerRevenue(): Promise<{
+    summary: {
+      totalGrossRevenue: number;
+      onlineAdvanceCollected: number;
+      pendingGroundDue: number;
+      platformCommission: number;
+      netPayoutOwed: number;
+      successfulCount: number;
+    };
+    gatewayBreakdown: { bkash: number; nagad: number; sslcommerz: number; cash: number };
+    payments: any[];
+  }> {
+    const res = await fetch(`${API_BASE}/payments/owner`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to fetch owner revenue data');
+    }
+    return res.json();
+  },
+
+  async getAdminPaymentAudit(): Promise<{
+    kpis: {
+      totalVolume: number;
+      totalCommissionEarned: number;
+      commissionRate: string;
+      successfulCount: number;
+      failedCount: number;
+      refundedCount: number;
+      totalTransactions: number;
+    };
+    gatewayStats: {
+      bkash: { count: number; volume: number };
+      nagad: { count: number; volume: number };
+      sslcommerz: { count: number; volume: number };
+      cash: { count: number; volume: number };
+    };
+    auditLogs: any[];
+  }> {
+    const res = await fetch(`${API_BASE}/payments/admin/audit`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to fetch admin payment audit');
     }
     return res.json();
   },

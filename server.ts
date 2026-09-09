@@ -20,8 +20,9 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // JSON request body parser & cookie parser
+  // JSON request body parser, URL-encoded body parser & cookie parser
   app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
   app.use(cookieParser());
 
   // Static directory for uploaded files
