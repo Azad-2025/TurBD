@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { TurfBDLogo } from './TurfBDLogo';
 import {
   Calendar,
   ShieldCheck,
@@ -44,22 +45,19 @@ export const Navbar: React.FC = () => {
           <div className="flex items-center gap-3 sm:gap-6">
             <button
               onClick={() => setActiveTab('browse')}
-              className="flex items-center gap-2 group cursor-pointer focus:outline-none"
+              className="flex items-center group cursor-pointer focus:outline-none"
               id="brand-logo-btn"
+              title="TurfBD - Sports Turf Booking"
             >
-              <div className="w-10 h-10 rounded-xl bg-emerald-500 flex items-center justify-center font-black text-neutral-950 text-xl tracking-tighter shadow-lg shadow-emerald-500/20 group-hover:scale-105 transition-transform">
-                TBD
-              </div>
-              <div className="text-left">
-                <div className="flex items-center gap-1.5">
-                  <span className="font-extrabold text-xl tracking-tight text-white">Turf</span>
-                  <span className="font-extrabold text-xl tracking-tight text-emerald-400">BD</span>
-                  <span className="text-[10px] uppercase font-bold bg-emerald-950 text-emerald-400 border border-emerald-800 px-1.5 py-0.5 rounded ml-1">
-                    MVP
-                  </span>
-                </div>
-                <p className="text-[11px] text-neutral-400 font-medium leading-none">Sports Turf Booking</p>
-              </div>
+              <TurfBDLogo
+                layout="horizontal"
+                size="md"
+                variant="dark"
+                showTagline={true}
+                taglineText="Sports Turf Booking"
+                showBadge={true}
+                badgeText="MVP"
+              />
             </button>
 
             {/* Quick City Dropdown */}

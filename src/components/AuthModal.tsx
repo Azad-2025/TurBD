@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
+import { TurfBDLogo } from './TurfBDLogo';
 import { X, User, Building2, Mail, Lock, Phone, KeyRound, Smartphone, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
 import { UserRole } from '../types';
 
@@ -214,10 +215,13 @@ export const AuthModal: React.FC = () => {
 
         {/* Modal Header */}
         <div className="mb-6">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="w-8 h-8 rounded-lg bg-emerald-500 flex items-center justify-center font-black text-neutral-950 text-sm">
-              TBD
-            </span>
+          <div className="flex items-center gap-3 mb-2">
+            <TurfBDLogo
+              layout="icon"
+              size="sm"
+              variant="dark"
+              id="auth-modal-logo"
+            />
             <h2 className="text-xl font-bold text-white">
               {activeMethod === 'forgot_password'
                 ? 'Reset Password'

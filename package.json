@@ -9,7 +9,12 @@
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "db:push": "drizzle-kit push --config=src/db/drizzle.config.ts",
+    "db:seed": "tsx scripts/seed.ts",
+    "admin:create": "tsx scripts/create_admin.ts",
+    "test:regression": "tsx scripts/regression_test.ts",
+    "test:payments": "tsx test_payment_regression.ts"
   },
   "dependencies": {
     "@google-cloud/storage": "^8.0.1",

@@ -25,7 +25,8 @@ async function startServer() {
   app.use(express.urlencoded({ extended: true }));
   app.use(cookieParser());
 
-  // Static directory for uploaded files
+  // Static assets and uploads
+  app.use(express.static(path.join(process.cwd(), 'public')));
   app.use('/uploads', express.static(path.join(process.cwd(), 'public', 'uploads')));
 
   // Health check endpoint

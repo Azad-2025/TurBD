@@ -110,7 +110,8 @@ async function runRegressionTests() {
   });
 
   // 5. Slot Availability
-  const bookingDate = new Date(Date.now() + 86400000 * 6).toISOString().split('T')[0];
+  const dayOffset = Math.floor(Math.random() * 250) + 15;
+  const bookingDate = new Date(Date.now() + 86400000 * dayOffset).toISOString().split('T')[0];
   await test('4. Slot Availability & Status Sync (Slots Module)', async () => {
     const res = await fetch(`${BASE_URL}/api/slots?turfId=${testTurfId}&date=${bookingDate}`);
     const data = await res.json();

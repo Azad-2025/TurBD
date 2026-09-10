@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 90" width="380" height="90" fill="none">
+  
+  <g transform="translate(10, -2) scale(0.8)">
+    <path
+      d="M 24 24
+         C 24 16, 32 12, 44 12
+         L 56 12
+         C 68 12, 76 16, 76 24
+         C 76 44, 70 65, 52 89
+         C 51 90.3, 49 90.3, 48 89
+         C 30 65, 24 44, 24 24
+         Z"
+      fill="none"
+      stroke="#0E5C26"
+      stroke-width="8"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path
+      d="M 38 48
+         L 47 58
+         L 63 38"
+      fill="none"
+      stroke="#6AC52B"
+      stroke-width="8"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+  </g>
+  <text
+    x="96"
+    y="60"
+    font-family="Plus Jakarta Sans, Inter, system-ui, -apple-system, sans-serif"
+    font-size="46"
+    font-weight="800"
+    letter-spacing="-1.2"
+    fill="#111111"
+  >Turf<tspan fill="#0E5C26">BD</tspan></text>
+</svg>

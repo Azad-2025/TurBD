@@ -1,6 +1,8 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Navbar } from './components/Navbar';
+import { TurfBDLogo } from './components/TurfBDLogo';
+import { LoadingSplash } from './components/LoadingSplash';
 import { SearchBar } from './components/SearchBar';
 import { TurfCard } from './components/TurfCard';
 import { TurfDetailModal } from './components/TurfDetailModal';
@@ -67,6 +69,17 @@ const MainApp: React.FC = () => {
 
     return true;
   });
+
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setIsInitialLoading(false), 600);
+    return () => clearTimeout(timer);
+  }, []);
+
+  if (isInitialLoading) {
+    return <LoadingSplash message="Loading TurfBD Sports Arenas..." />;
+  }
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col font-['Plus_Jakarta_Sans',sans-serif]">
@@ -188,12 +201,12 @@ const MainApp: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
             <div className="space-y-3 md:col-span-1">
-              <div className="flex items-center gap-2">
-                <span className="w-8 h-8 rounded-xl bg-emerald-500 flex items-center justify-center font-black text-neutral-950 text-sm">
-                  TBD
-                </span>
-                <span className="font-extrabold text-lg text-white">Turf<span className="text-emerald-400">BD</span></span>
-              </div>
+              <TurfBDLogo
+                layout="horizontal"
+                size="md"
+                variant="dark"
+                id="footer-turfbd-logo"
+              />
               <p className="text-xs text-neutral-400 leading-relaxed">
                 Bangladesh’s dedicated sports arena booking platform. Find pitches, book slots, and play with peace of mind.
               </p>

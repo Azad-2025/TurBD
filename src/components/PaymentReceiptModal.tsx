@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, Printer, ShieldCheck, QrCode, Download, CheckCircle2, Calendar, Clock, MapPin } from 'lucide-react';
 import { Booking } from '../types';
+import { TurfBDLogo } from './TurfBDLogo';
 
 interface PaymentReceiptModalProps {
   booking: Booking;
@@ -62,14 +63,16 @@ export const PaymentReceiptModal: React.FC<PaymentReceiptModalProps> = ({
           <div className="flex items-start justify-between border-b border-neutral-800 print:border-neutral-300 pb-6">
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-2xl font-black text-emerald-400 tracking-tight print:text-emerald-700">
-                  Turf<span className="text-white print:text-black">BD</span>
-                </span>
-                <span className="text-[10px] uppercase font-bold tracking-widest px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 print:bg-emerald-100 print:text-emerald-800">
-                  Verified
-                </span>
+                <TurfBDLogo
+                  layout="horizontal"
+                  size="sm"
+                  variant="dark"
+                  showBadge={true}
+                  badgeText="Verified"
+                  id="receipt-turfbd-logo"
+                />
               </div>
-              <p className="text-xs text-neutral-400 print:text-neutral-600 mt-1">
+              <p className="text-xs text-neutral-400 print:text-neutral-600 mt-1.5">
                 Bangladesh Premier Sports Arena & Turf Network
               </p>
             </div>
