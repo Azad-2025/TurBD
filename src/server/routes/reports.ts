@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { db } from '../../db/index.ts';
-import { bookings, turfs, users, payments } from '../../db/schema.ts';
+import { bookings, turfs, users, payments, payouts, disputes } from '../../db/schema.ts';
 import { requireAdmin } from '../middleware/auth.ts';
 
 const router = Router();
@@ -12,6 +12,8 @@ router.get('/', requireAdmin, async (_req: Request, res: Response) => {
     const allTurfs = await db.select().from(turfs);
     const allUsers = await db.select().from(users);
     const allPayments = await db.select().from(payments);
+    const allPayouts = await db.select().from(payouts);
+    const allDisputes = await db.select().from(disputes);
 
     const totalRevenue = allBookings.reduce((sum, b) => sum + (b.advancePaid || 0), 0);
     const totalDue = allBookings.reduce((sum, b) => sum + (b.dueAmount || 0), 0);
@@ -24,6 +26,10 @@ router.get('/', requireAdmin, async (_req: Request, res: Response) => {
         totalTurfs: allTurfs.length,
         totalUsers: allUsers.length,
         totalPayments: allPayments.length,
+        totalPayouts: allPayouts.length,
+        totalDisputes: allDisputes.length,
+        pendingPayoutsCount: allPayouts.filter((p) => p.status === 'pending').length,
+        openDisputesCount: allDisputes.filter((d) => d.status === 'open' || d.status === 'under_review').length,
       },
       bookingsByStatus: {
         confirmed: allBookings.filter((b) => b.bookingStatus === 'confirmed').length,

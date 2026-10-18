@@ -188,7 +188,7 @@ export class PaymentGatewayManager {
             transactionId: result.trxID || '',
             amount: result.amount,
             currency: 'BDT',
-            message: `Amount mismatch detected: Expected ৳${expectedAmount} but provider returned ৳${result.amount}.`,
+            message: `Amount mismatch detected: Expected BDT ${expectedAmount} but provider returned BDT ${result.amount}.`,
           };
         }
         this.registerTransaction(result.trxID);
@@ -224,7 +224,7 @@ export class PaymentGatewayManager {
             transactionId: result.trxID || '',
             amount: result.amount,
             currency: 'BDT',
-            message: `Amount mismatch detected: Expected ৳${expectedAmount} but provider returned ৳${result.amount}.`,
+            message: `Amount mismatch detected: Expected BDT ${expectedAmount} but provider returned BDT ${result.amount}.`,
           };
         }
         this.registerTransaction(result.trxID);
@@ -264,7 +264,7 @@ export class PaymentGatewayManager {
             transactionId: result.bankTranId || '',
             amount: result.amount,
             currency: 'BDT',
-            message: `Amount mismatch detected: Expected ৳${expectedAmount} but provider returned ৳${result.amount}.`,
+            message: `Amount mismatch detected: Expected BDT ${expectedAmount} but provider returned BDT ${result.amount}.`,
           };
         }
         this.registerTransaction(result.bankTranId);

@@ -4,8 +4,18 @@ import { db } from '../../db/index.ts';
 import { refreshTokens, users } from '../../db/schema.ts';
 import { eq } from 'drizzle-orm';
 
-export const JWT_SECRET = process.env.JWT_SECRET || 'turfbd_prod_access_secret_2026_xyz_key';
-export const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'turfbd_prod_refresh_secret_2026_abc_key';
+import crypto from 'crypto';
+
+// Dynamic cryptographic fallback to eliminate static guessable secrets
+const fallbackJwtSecret = crypto.randomBytes(32).toString('hex');
+const fallbackJwtRefreshSecret = crypto.randomBytes(32).toString('hex');
+
+if (!process.env.JWT_SECRET) {
+  console.warn('[SECURITY WARNING] process.env.JWT_SECRET is not configured. An ephemeral 256-bit cryptographically secure key has been generated for this session.');
+}
+
+export const JWT_SECRET = process.env.JWT_SECRET?.trim() || fallbackJwtSecret;
+export const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET?.trim() || fallbackJwtRefreshSecret;
 
 export const ACCESS_TOKEN_EXPIRY = '15m';
 export const REFRESH_TOKEN_EXPIRY_DAYS = 7;
@@ -77,6 +87,33 @@ export function validateEmail(email: string): boolean {
 }
 
 /**
+ * Secure OTP Hashing using HMAC SHA-256
+ */
+export function hashOtp(code: string): string {
+  return crypto.createHmac('sha256', JWT_SECRET).update(code.trim()).digest('hex');
+}
+
+/**
+ * Verify a plain OTP code against its cryptographic HMAC SHA-256 hash
+ */
+export function verifyOtpHash(code: string, storedHash: string): boolean {
+  if (!code || !storedHash) return false;
+  const computedHash = hashOtp(code);
+  try {
+    return crypto.timingSafeEqual(Buffer.from(computedHash, 'hex'), Buffer.from(storedHash, 'hex'));
+  } catch {
+    return computedHash === storedHash;
+  }
+}
+
+/**
+ * Generate high-entropy 256-bit cryptographically secure token
+ */
+export function generateSecureToken(): string {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+/**
  * Generate Access Token (15 minutes)
  */
 export function generateAccessToken(user: { id: number; email: string; role: string }): string {
@@ -142,6 +179,56 @@ export function clearAuthCookies(res: Response) {
     path: '/',
   });
   res.clearCookie('refresh_token', {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none',
+    path: '/',
+  });
+}
+
+/**
+ * Set HTTP-only secure cookie for OAuth CSRF state parameter
+ */
+export function setOAuthStateCookie(res: Response, provider: 'google' | 'facebook', state: string) {
+  res.cookie(`oauth_state_${provider}`, state, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none',
+    maxAge: 10 * 60 * 1000, // 10 minutes
+    path: '/',
+  });
+}
+
+/**
+ * Clear OAuth CSRF state cookie
+ */
+export function clearOAuthStateCookie(res: Response, provider: 'google' | 'facebook') {
+  res.clearCookie(`oauth_state_${provider}`, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none',
+    path: '/',
+  });
+}
+
+/**
+ * Set HTTP-only secure cookie for OAuth Redirect URI
+ */
+export function setOAuthRedirectCookie(res: Response, provider: 'google' | 'facebook', redirectUri: string) {
+  res.cookie(`oauth_redirect_${provider}`, redirectUri, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none',
+    maxAge: 10 * 60 * 1000, // 10 minutes
+    path: '/',
+  });
+}
+
+/**
+ * Clear OAuth Redirect URI cookie
+ */
+export function clearOAuthRedirectCookie(res: Response, provider: 'google' | 'facebook') {
+  res.clearCookie(`oauth_redirect_${provider}`, {
     httpOnly: true,
     secure: true,
     sameSite: 'none',

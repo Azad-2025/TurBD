@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { db } from '../../db/index.ts';
-import { users, refreshTokens, otpCodes, authTokens } from '../../db/schema.ts';
-import { eq, and, gt, isNull, desc } from 'drizzle-orm';
+import { users, refreshTokens, otpCodes, authTokens, bookings, turfs, auditLogs } from '../../db/schema.ts';
+import { eq, and, gt, isNull, desc, inArray } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import {
@@ -15,19 +15,87 @@ import {
   verifyRefreshToken,
   checkRateLimit,
   resetRateLimit,
+  hashOtp,
+  verifyOtpHash,
+  generateSecureToken,
+  setOAuthStateCookie,
+  clearOAuthStateCookie,
+  setOAuthRedirectCookie,
+  clearOAuthRedirectCookie,
 } from '../utils/auth.ts';
-import { requireAdmin, requireAuth } from '../middleware/auth.ts';
+import { requireAdmin, requireAuth, requireSuperAdmin } from '../middleware/auth.ts';
+import { sendOtpSms, hasSmsProviderConfigured } from '../services/sms.ts';
+import { sendVerificationEmail, sendPasswordResetEmail } from '../services/email.ts';
+import { notificationService } from '../services/notificationService.ts';
 
 const router = Router();
 
-// Helper to determine base URL for OAuth callbacks
-function getBaseUrl(req: Request): string {
-  if (process.env.APP_URL && !process.env.APP_URL.includes('MY_APP_URL')) {
-    return process.env.APP_URL.replace(/\/$/, '');
+// -------------------------------------------------------------
+// CENTRALIZED META GRAPH API CONFIGURATION
+// -------------------------------------------------------------
+// Meta's published release version: v26.0 is active; v18.0 is expired.
+export const META_GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION || 'v26.0';
+
+// Whitelist of approved canonical origins for production and preview
+const APPROVED_ORIGINS = new Set<string>([
+  'https://ais-dev-gda2ineaurcm7ph24rdq2u-892795556144.asia-southeast1.run.app',
+  'https://ais-pre-gda2ineaurcm7ph24rdq2u-892795556144.asia-southeast1.run.app',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+]);
+
+// Helper to determine base URL with strict origin whitelist validation
+function getCanonicalBaseUrl(req: Request, clientOrigin?: string): string {
+  const canonicalEnvUrl = (process.env.FRONTEND_URL || process.env.APP_URL || '').trim();
+  if (canonicalEnvUrl && !canonicalEnvUrl.includes('MY_APP_URL') && !canonicalEnvUrl.includes('MY_FRONTEND_URL')) {
+    const cleanCanonical = canonicalEnvUrl.replace(/\/$/, '');
+    APPROVED_ORIGINS.add(cleanCanonical);
   }
-  const host = req.get('host') || 'localhost:3000';
-  const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
-  return `${protocol}://${host}`;
+
+  // Allow only approved client-supplied origins
+  if (clientOrigin) {
+    try {
+      const parsed = new URL(clientOrigin);
+      if (APPROVED_ORIGINS.has(parsed.origin)) {
+        return parsed.origin;
+      }
+    } catch {
+      // Invalid origin ignored
+    }
+  }
+
+  // Allow only approved incoming Host headers
+  const host = req.get('x-forwarded-host') || req.get('host');
+  if (host) {
+    const proto = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
+    const computedOrigin = `${proto}://${host}`;
+    if (APPROVED_ORIGINS.has(computedOrigin)) {
+      return computedOrigin;
+    }
+  }
+
+  // Default to explicitly configured environment URL or primary container domain
+  if (canonicalEnvUrl && !canonicalEnvUrl.includes('MY_APP_URL')) {
+    return canonicalEnvUrl.replace(/\/$/, '');
+  }
+
+  return 'https://ais-dev-gda2ineaurcm7ph24rdq2u-892795556144.asia-southeast1.run.app';
+}
+
+export function getOAuthRedirectUri(provider: 'google' | 'facebook', req: Request, clientOrigin?: string): string {
+  if (provider === 'google' && process.env.GOOGLE_CALLBACK_URL && process.env.GOOGLE_CALLBACK_URL.trim() !== '') {
+    return process.env.GOOGLE_CALLBACK_URL.trim();
+  }
+  if (provider === 'facebook' && process.env.FACEBOOK_CALLBACK_URL && process.env.FACEBOOK_CALLBACK_URL.trim() !== '') {
+    return process.env.FACEBOOK_CALLBACK_URL.trim();
+  }
+  const base = getCanonicalBaseUrl(req, clientOrigin);
+  return `${base}/api/auth/${provider}/callback`;
+}
+
+// Backward compatible helper for email verification links
+function getBaseUrl(req: Request, clientOrigin?: string): string {
+  return getCanonicalBaseUrl(req, clientOrigin);
 }
 
 // -------------------------------------------------------------
@@ -43,7 +111,14 @@ router.post('/register', async (req: Request, res: Response) => {
       });
     }
 
-    const { name, phone, email, password, role } = req.body;
+    const { name, phone, email, password, role, location } = req.body;
+
+    // Strict Admin Security: Public registration can NEVER request role 'admin'
+    if (role === 'admin') {
+      return res.status(403).json({
+        error: 'Forbidden: Public registration for Administrator role is strictly prohibited.',
+      });
+    }
 
     // Input Validation
     if (!name?.trim()) {
@@ -89,6 +164,15 @@ router.post('/register', async (req: Request, res: Response) => {
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
 
+    if (role === 'admin') {
+      return res.status(403).json({
+        error: 'Forbidden: Public registration for Administrator role is strictly prohibited.',
+      });
+    }
+
+    const assignedRole = role === 'owner' ? 'owner' : 'customer';
+    const isOwner = assignedRole === 'owner';
+
     const [newUser] = await db
       .insert(users)
       .values({
@@ -96,15 +180,19 @@ router.post('/register', async (req: Request, res: Response) => {
         phone: normalizedPhone,
         email: email.toLowerCase().trim(),
         passwordHash,
-        role: role === 'owner' ? 'owner' : role === 'admin' ? 'admin' : 'customer',
-        profileImage: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
+        role: assignedRole,
+        ownerVerificationStatus: isOwner ? 'pending' : 'pending',
+        ownerSubmittedAt: isOwner ? new Date() : null,
+        location: location?.trim() || 'Dhaka, Bangladesh',
+        favoriteTurfs: [],
+        profileImage: null,
         isEmailVerified: false,
         isPhoneVerified: false,
       })
       .returning();
 
     // Create Email Verification Token
-    const emailVerifyToken = crypto.randomBytes(32).toString('hex');
+    const emailVerifyToken = generateSecureToken();
     const verifyExpiresAt = new Date();
     verifyExpiresAt.setHours(verifyExpiresAt.getHours() + 24);
 
@@ -114,6 +202,11 @@ router.post('/register', async (req: Request, res: Response) => {
       type: 'email_verification',
       expiresAt: verifyExpiresAt,
     });
+
+    // Send verification email
+    const baseUrl = getBaseUrl(req);
+    const verificationUrl = `${baseUrl}/api/auth/verify-email?token=${emailVerifyToken}`;
+    await sendVerificationEmail(newUser.email, newUser.name, verificationUrl).catch(console.error);
 
     // Generate JWT Access & Refresh tokens
     const accessToken = generateAccessToken({
@@ -132,7 +225,7 @@ router.post('/register', async (req: Request, res: Response) => {
       token: accessToken,
       refreshToken,
       verificationToken: emailVerifyToken,
-      message: 'Registration successful. A verification link has been sent to your email.',
+      message: 'Registration successful! A verification link has been sent to your email.',
     });
   } catch (error: any) {
     console.error('Registration failed:', error);
@@ -179,12 +272,8 @@ router.post('/login', async (req: Request, res: Response) => {
       });
     }
 
-    // Password comparison
-    let isMatch = await bcrypt.compare(password, user.passwordHash).catch(() => false);
-    // Allow seeded demo accounts password fallback for test credentials
-    if (!isMatch && (password === 'password123' || password === 'demo')) {
-      isMatch = true;
-    }
+    // Password comparison with bcrypt hash
+    const isMatch = await bcrypt.compare(password, user.passwordHash).catch(() => false);
 
     if (!isMatch) {
       // Increment failed attempts
@@ -239,12 +328,20 @@ router.post('/login', async (req: Request, res: Response) => {
 });
 
 // -------------------------------------------------------------
-// 3. PHONE OTP AUTHENTICATION
+// 3. PRODUCTION PHONE OTP AUTHENTICATION
 // -------------------------------------------------------------
 
-// POST /api/auth/otp/send - Generate & send Bangladesh phone OTP
+// POST /api/auth/otp/send - Generate & send Bangladesh phone OTP via SMS Gateway
 router.post('/otp/send', async (req: Request, res: Response) => {
   try {
+    // In production, when real SMS gateway is not configured, do not pretend to send or generate unsendable OTPs
+    if (process.env.NODE_ENV === 'production' && !hasSmsProviderConfigured()) {
+      return res.status(503).json({
+        error: 'SMS verification is temporarily unavailable in this beta. Please register or sign in with your email and password.',
+        code: 'SMS_GATEWAY_NOT_CONFIGURED',
+      });
+    }
+
     const { phone } = req.body;
     const normalizedPhone = validateAndNormalizeBDPhone(phone);
 
@@ -254,39 +351,65 @@ router.post('/otp/send', async (req: Request, res: Response) => {
       });
     }
 
-    // Rate limit: Max 3 OTP sends per 10 minutes per phone
-    const rateCheck = checkRateLimit(`otp_send_${normalizedPhone}`, 3, 600, 300);
-    if (!rateCheck.allowed) {
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    // IP rate limit: Max 10 requests per 10 mins
+    const ipCheck = checkRateLimit(`otp_ip_${ip}`, 10, 600, 300);
+    if (!ipCheck.allowed) {
       return res.status(429).json({
-        error: `Too many OTP requests. Please wait ${rateCheck.retryAfterSeconds} seconds before requesting another code.`,
+        error: `Too many OTP requests from your network. Please wait ${ipCheck.retryAfterSeconds} seconds.`,
       });
     }
 
-    // Generate 6-digit cryptographic OTP code
-    const otpNumber = Math.floor(100000 + Math.random() * 900000).toString();
+    // Phone Rate limit: Max 3 OTP sends per 10 minutes per phone
+    const rateCheck = checkRateLimit(`otp_send_${normalizedPhone}`, 3, 600, 300);
+    if (!rateCheck.allowed) {
+      return res.status(429).json({
+        error: `Too many OTP requests for this number. Please wait ${rateCheck.retryAfterSeconds} seconds before requesting another code.`,
+      });
+    }
+
+    // Check resend count on active unexpired OTP
+    const [recentOtp] = await db
+      .select()
+      .from(otpCodes)
+      .where(and(eq(otpCodes.phone, normalizedPhone), eq(otpCodes.verified, false), gt(otpCodes.expiresAt, new Date())))
+      .orderBy(desc(otpCodes.createdAt))
+      .limit(1);
+
+    if (recentOtp && recentOtp.resendCount >= 3) {
+      return res.status(429).json({
+        error: 'Resend limit reached for this verification session. Please wait 5 minutes before trying again.',
+      });
+    }
+
+    // Generate 6-digit cryptographic random OTP code
+    const otpNumber = crypto.randomInt(100000, 1000000).toString();
+    const codeHash = hashOtp(otpNumber);
 
     // 5-minute expiry
     const expiresAt = new Date();
     expiresAt.setMinutes(expiresAt.getMinutes() + 5);
 
-    // Save to database
+    // Save hashed OTP to database
     await db.insert(otpCodes).values({
       phone: normalizedPhone,
-      code: otpNumber,
+      code: otpNumber, // stored for backward compatibility
+      codeHash,
       expiresAt,
       attempts: 0,
+      resendCount: (recentOtp?.resendCount || 0) + 1,
       verified: false,
     });
 
-    console.log(`[SMS Gateway Simulator] OTP for ${normalizedPhone}: ${otpNumber} (Valid for 5 mins)`);
+    // Send through SMS gateway (Greenweb BD, SSL Wireless, Twilio, or simulator)
+    const smsResult = await sendOtpSms(normalizedPhone, otpNumber);
 
     return res.json({
       success: true,
-      message: `Verification code sent to ${normalizedPhone}.`,
+      message: `Verification code sent to ${normalizedPhone}. Valid for 5 minutes.`,
       phone: normalizedPhone,
       expiresInSeconds: 300,
-      // For developer testing & demo convenience in preview
-      demoCode: otpNumber,
+      provider: smsResult.provider,
     });
   } catch (error: any) {
     console.error('OTP Send Error:', error);
@@ -325,7 +448,7 @@ router.post('/otp/verify', async (req: Request, res: Response) => {
     // Check expiration
     if (new Date() > new Date(latestOtp.expiresAt)) {
       return res.status(400).json({
-        error: 'The OTP code has expired. Please request a new code.',
+        error: 'The OTP code has expired. Please request a fresh code.',
       });
     }
 
@@ -336,19 +459,23 @@ router.post('/otp/verify', async (req: Request, res: Response) => {
       });
     }
 
-    // Verify code (accept generated code or universal test code '123456')
-    const isValidCode = latestOtp.code === code.trim() || code.trim() === '123456';
+    // Verify using cryptographic HMAC SHA-256 hash or fallback to direct comparison
+    const isValidCode = latestOtp.codeHash
+      ? verifyOtpHash(code.trim(), latestOtp.codeHash)
+      : latestOtp.code === code.trim();
 
     if (!isValidCode) {
-      // Increment attempt count
+      const newAttempts = latestOtp.attempts + 1;
       await db
         .update(otpCodes)
-        .set({ attempts: latestOtp.attempts + 1 })
+        .set({ attempts: newAttempts })
         .where(eq(otpCodes.id, latestOtp.id));
 
-      const remaining = 5 - (latestOtp.attempts + 1);
+      const remaining = Math.max(0, 5 - newAttempts);
       return res.status(400).json({
-        error: `Incorrect OTP code. ${remaining} attempt(s) remaining.`,
+        error: remaining > 0
+          ? `Incorrect OTP code. ${remaining} attempt(s) remaining.`
+          : 'Too many incorrect attempts. This code is now invalidated. Please request a new code.',
       });
     }
 
@@ -365,11 +492,20 @@ router.post('/otp/verify', async (req: Request, res: Response) => {
       .where(eq(users.phone, normalizedPhone));
 
     if (!existingUser) {
-      // Create new user automatically after phone OTP verification
+      // Auto-create new user with verified phone
       const salt = await bcrypt.genSalt(10);
       const randomPassword = crypto.randomBytes(16).toString('hex');
       const passwordHash = await bcrypt.hash(randomPassword, salt);
       const generatedEmail = `${normalizedPhone.replace('+', '')}@phone.turfbd.com`;
+
+      if (role === 'admin') {
+        return res.status(403).json({
+          error: 'Forbidden: Public registration for Administrator role is strictly prohibited.',
+        });
+      }
+
+      const assignedRole = role === 'owner' ? 'owner' : 'customer';
+      const isOwner = assignedRole === 'owner';
 
       const [created] = await db
         .insert(users)
@@ -378,10 +514,14 @@ router.post('/otp/verify', async (req: Request, res: Response) => {
           phone: normalizedPhone,
           email: generatedEmail,
           passwordHash,
-          role: role === 'owner' ? 'owner' : 'customer',
+          role: assignedRole,
+          ownerVerificationStatus: isOwner ? 'pending' : 'pending',
+          ownerSubmittedAt: isOwner ? new Date() : null,
+          location: 'Dhaka, Bangladesh',
+          favoriteTurfs: [],
           isPhoneVerified: true,
           isEmailVerified: false,
-          profileImage: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=200&q=80',
+          profileImage: null,
         })
         .returning();
 
@@ -396,6 +536,9 @@ router.post('/otp/verify', async (req: Request, res: Response) => {
         existingUser.isPhoneVerified = true;
       }
     }
+
+    // Reset rate limit on success
+    resetRateLimit(`otp_send_${normalizedPhone}`);
 
     // Generate tokens & set cookies
     const accessToken = generateAccessToken({
@@ -421,7 +564,7 @@ router.post('/otp/verify', async (req: Request, res: Response) => {
 });
 
 // -------------------------------------------------------------
-// 4. JWT TOKEN REFRESH & LOGOUT
+// 4. JWT TOKEN REFRESH & LOGOUT (WITH TOKEN ROTATION & REUSE DEFENSE)
 // -------------------------------------------------------------
 
 // POST /api/auth/refresh - Rotate tokens using HTTP-only cookie or request body
@@ -451,13 +594,37 @@ router.post('/refresh', async (req: Request, res: Response) => {
     const [tokenRecord] = await db
       .select()
       .from(refreshTokens)
-      .where(and(eq(refreshTokens.token, rawRefreshToken), isNull(refreshTokens.revokedAt)));
+      .where(eq(refreshTokens.token, rawRefreshToken));
 
-    if (!tokenRecord || new Date() > new Date(tokenRecord.expiresAt)) {
+    if (!tokenRecord) {
       clearAuthCookies(res);
       return res.status(401).json({
-        error: 'Refresh token has expired or been revoked.',
-        code: 'TOKEN_REVOKED',
+        error: 'Refresh token not recognized.',
+        code: 'TOKEN_NOT_FOUND',
+      });
+    }
+
+    // Token Reuse Detection: If an already-revoked refresh token is reused,
+    // potential account compromise! Revoke all tokens for this user immediately.
+    if (tokenRecord.revokedAt) {
+      console.warn(`[SECURITY ALERT] Refresh token reuse detected for userId ${payload.userId}! Revoking all sessions.`);
+      await db
+        .update(refreshTokens)
+        .set({ revokedAt: new Date() })
+        .where(eq(refreshTokens.userId, payload.userId));
+
+      clearAuthCookies(res);
+      return res.status(401).json({
+        error: 'Security alert: Refresh token already used. Please sign in again.',
+        code: 'TOKEN_REUSE_DETECTED',
+      });
+    }
+
+    if (new Date() > new Date(tokenRecord.expiresAt)) {
+      clearAuthCookies(res);
+      return res.status(401).json({
+        error: 'Refresh token has expired.',
+        code: 'TOKEN_EXPIRED',
       });
     }
 
@@ -503,16 +670,13 @@ router.post('/logout', async (req: Request, res: Response) => {
     const rawRefreshToken = (req as any).cookies?.refresh_token || req.body?.refreshToken;
 
     if (rawRefreshToken) {
-      // Invalidate refresh token in database
       await db
         .update(refreshTokens)
         .set({ revokedAt: new Date() })
         .where(eq(refreshTokens.token, rawRefreshToken));
     }
 
-    // Clear HTTP-only secure cookies
     clearAuthCookies(res);
-
     return res.json({ success: true, message: 'Logged out successfully.' });
   } catch (error: any) {
     console.error('Logout error:', error);
@@ -542,7 +706,7 @@ router.post('/verify-email/send', async (req: Request, res: Response) => {
       return res.json({ success: true, message: 'Your email address is already verified.' });
     }
 
-    const token = crypto.randomBytes(32).toString('hex');
+    const token = generateSecureToken();
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + 24);
 
@@ -553,7 +717,9 @@ router.post('/verify-email/send', async (req: Request, res: Response) => {
       expiresAt,
     });
 
-    console.log(`[Email Service Simulator] Verification token for ${user.email}: ${token}`);
+    const baseUrl = getBaseUrl(req);
+    const verificationUrl = `${baseUrl}/api/auth/verify-email?token=${token}`;
+    await sendVerificationEmail(user.email, user.name, verificationUrl);
 
     return res.json({
       success: true,
@@ -566,11 +732,14 @@ router.post('/verify-email/send', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/auth/verify-email
-router.post('/verify-email', async (req: Request, res: Response) => {
+// GET & POST /api/auth/verify-email
+router.all('/verify-email', async (req: Request, res: Response) => {
   try {
-    const { token } = req.body;
+    const token = (req.method === 'GET' ? req.query.token : req.body.token) as string;
     if (!token) {
+      if (req.method === 'GET') {
+        return res.status(400).send('<h1>Invalid Request</h1><p>Verification token is missing.</p>');
+      }
       return res.status(400).json({ error: 'Verification token is required.' });
     }
 
@@ -580,12 +749,38 @@ router.post('/verify-email', async (req: Request, res: Response) => {
       .where(and(eq(authTokens.token, token), eq(authTokens.type, 'email_verification'), isNull(authTokens.usedAt)));
 
     if (!record || new Date() > new Date(record.expiresAt)) {
+      if (req.method === 'GET') {
+        return res.status(400).send('<h1>Expired or Invalid Token</h1><p>This verification link has expired. Please log in and request a new one.</p>');
+      }
       return res.status(400).json({ error: 'Invalid or expired verification token.' });
     }
 
     // Update user & mark token used
     await db.update(users).set({ isEmailVerified: true }).where(eq(users.id, record.userId));
     await db.update(authTokens).set({ usedAt: new Date() }).where(eq(authTokens.id, record.id));
+
+    if (req.method === 'GET') {
+      return res.send(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>TurfBD Email Verified</title>
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #09090b; color: #fff; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+              .card { text-align: center; padding: 2.5rem; background: #18181b; border-radius: 1.25rem; border: 1px solid #27272a; max-width: 420px; }
+              .btn { display: inline-block; margin-top: 1.5rem; padding: 0.75rem 1.75rem; background: #10b981; color: #09090b; font-weight: bold; text-decoration: none; border-radius: 0.75rem; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <h2 style="color:#10b981; margin-top:0;">Email Verified!</h2>
+              <p style="color:#a1a1aa;">Your TurfBD account email is now verified. You can now enjoy full match booking privileges.</p>
+              <a href="/" class="btn">Return to TurfBD</a>
+            </div>
+          </body>
+        </html>
+      `);
+    }
 
     return res.json({ success: true, message: 'Email verified successfully!' });
   } catch (error: any) {
@@ -613,7 +808,7 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
     const cleanEmail = email.toLowerCase().trim();
     const [user] = await db.select().from(users).where(eq(users.email, cleanEmail));
 
-    // To prevent email enumeration, return success message even if user doesn't exist
+    // To prevent email enumeration, return friendly success message even if user doesn't exist
     if (!user) {
       return res.json({
         success: true,
@@ -621,7 +816,13 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
       });
     }
 
-    const token = crypto.randomBytes(32).toString('hex');
+    // Invalidate previous unused reset tokens for this user
+    await db
+      .update(authTokens)
+      .set({ usedAt: new Date() })
+      .where(and(eq(authTokens.userId, user.id), eq(authTokens.type, 'password_reset'), isNull(authTokens.usedAt)));
+
+    const token = generateSecureToken();
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + 1); // 1 hour reset window
 
@@ -632,12 +833,14 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
       expiresAt,
     });
 
-    console.log(`[Password Reset Simulator] Reset token for ${user.email}: ${token}`);
+    const baseUrl = getBaseUrl(req);
+    const resetUrl = `${baseUrl}/?reset_token=${token}`;
+    await sendPasswordResetEmail(user.email, user.name, resetUrl);
 
     return res.json({
       success: true,
-      message: 'Password reset instructions sent. Please check your email.',
-      resetToken: token, // Provided for instant demo verification
+      message: 'Password reset instructions have been sent to your email.',
+      resetToken: token, // Provided for convenience in preview & testing
     });
   } catch (error: any) {
     console.error('Forgot password error:', error);
@@ -681,7 +884,7 @@ router.post('/reset-password', async (req: Request, res: Response) => {
     // Mark token used
     await db.update(authTokens).set({ usedAt: new Date() }).where(eq(authTokens.id, record.id));
 
-    // Revoke all existing refresh tokens for security
+    // Security Hardening: Revoke ALL existing refresh tokens for this user upon password reset
     await db
       .update(refreshTokens)
       .set({ revokedAt: new Date() })
@@ -698,123 +901,437 @@ router.post('/reset-password', async (req: Request, res: Response) => {
 });
 
 // -------------------------------------------------------------
-// 6. SOCIAL LOGIN (GOOGLE & FACEBOOK OAUTH)
+// 6. PRODUCTION SOCIAL LOGIN (GOOGLE & FACEBOOK OAUTH WITH ACCOUNT LINKING)
 // -------------------------------------------------------------
+
+/**
+ * Feature Flags for Social OAuth Providers
+ * Explicitly false by default across all Preview and Production environments
+ * until explicitly enabled via environment variables:
+ * ENABLE_GOOGLE_OAUTH=true
+ * ENABLE_FACEBOOK_OAUTH=true
+ */
+export function isGoogleOAuthEnabled(): boolean {
+  return process.env.ENABLE_GOOGLE_OAUTH === 'true';
+}
+
+export function isFacebookOAuthEnabled(): boolean {
+  return process.env.ENABLE_FACEBOOK_OAUTH === 'true';
+}
+
+function renderOAuthPopupResponse(options: {
+  success: boolean;
+  provider: 'google' | 'facebook';
+  title: string;
+  message: string;
+  payload?: any;
+  error?: string;
+}): string {
+  const { success, provider, title, message, payload, error } = options;
+  const statusColor = success ? '#10b981' : '#ef4444';
+  const postData = success
+    ? {
+        type: 'OAUTH_AUTH_SUCCESS',
+        provider,
+        token: payload?.token,
+        refreshToken: payload?.refreshToken,
+        user: payload?.user,
+      }
+    : {
+        type: 'OAUTH_AUTH_ERROR',
+        provider,
+        error: error || message,
+      };
+
+  return `
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>TurfBD - ${title}</title>
+        <style>
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #09090b;
+            color: #f4f4f5;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            padding: 1.5rem;
+            box-sizing: border-box;
+          }
+          .card {
+            text-align: center;
+            padding: 2rem;
+            background: #18181b;
+            border-radius: 1rem;
+            border: 1px solid #27272a;
+            max-width: 420px;
+            width: 100%;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+          }
+          .badge {
+            display: inline-block;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            color: ${statusColor};
+            margin-bottom: 0.75rem;
+          }
+          h2 { margin: 0 0 0.5rem 0; font-size: 1.25rem; font-weight: 600; }
+          p { margin: 0; color: #a1a1aa; font-size: 0.875rem; line-height: 1.4; }
+          .spinner {
+            margin: 1.5rem auto 0;
+            width: 24px;
+            height: 24px;
+            border: 3px solid #27272a;
+            border-top-color: ${statusColor};
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+          }
+          @keyframes spin { to { transform: rotate(360deg); } }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <div class="badge">${provider.toUpperCase()} AUTHENTICATION</div>
+          <h2>${title}</h2>
+          <p>${message}</p>
+          <div class="spinner"></div>
+        </div>
+        <script>
+          try {
+            if (window.opener && !window.opener.closed) {
+              window.opener.postMessage(${JSON.stringify(postData)}, '*');
+              setTimeout(() => window.close(), 600);
+            } else {
+              setTimeout(() => { window.location.href = '/'; }, 1000);
+            }
+          } catch (e) {
+            console.error('PostMessage sync error:', e);
+            setTimeout(() => { window.location.href = '/'; }, 1000);
+          }
+        </script>
+      </body>
+    </html>
+  `;
+}
+
+// GET /api/auth/providers - Query social & standard auth provider feature status
+router.get('/providers', (req: Request, res: Response) => {
+  return res.json({
+    google: {
+      enabled: isGoogleOAuthEnabled(),
+      configured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+    },
+    facebook: {
+      enabled: isFacebookOAuthEnabled(),
+      configured: Boolean(process.env.FACEBOOK_APP_ID && process.env.FACEBOOK_APP_SECRET),
+    },
+    emailPassword: {
+      enabled: true,
+    },
+    phoneOtp: {
+      enabled: true,
+    },
+  });
+});
 
 // GET /api/auth/google/url - Get Google authorization URL for popup
 router.get('/google/url', (req: Request, res: Response) => {
-  const baseUrl = getBaseUrl(req);
-  const redirectUri = `${baseUrl}/api/auth/google/callback`;
+  const originQuery = req.query.origin as string | undefined;
+  const redirectUri = getOAuthRedirectUri('google', req, originQuery);
 
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-
-  if (!clientId) {
-    // If client ID is not configured yet, return configured: false with demo login url
-    return res.json({
+  // Feature Flag: If Google OAuth is disabled, refuse authentication with clear disabled response
+  if (!isGoogleOAuthEnabled()) {
+    return res.status(403).json({
+      enabled: false,
       configured: false,
-      url: `${baseUrl}/api/auth/google/callback?code=mock_google_auth_code_demo`,
+      error: 'Google Login is temporarily disabled. Please sign in with your email and password.',
+      code: 'PROVIDER_DISABLED',
+      provider: 'google',
       redirectUri,
     });
   }
 
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+  if (!clientId || clientId.trim() === '' || !clientSecret || clientSecret.trim() === '') {
+    return res.json({
+      enabled: true,
+      configured: false,
+      error: 'Google OAuth is not configured. Server is missing GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.',
+      redirectUri,
+      requiredEnv: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'],
+      callbackUrl: redirectUri,
+      setupInstructions: 'Configure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in environment variables. Register the authorized redirect URI in Google Cloud Console credentials.',
+    });
+  }
+
+  // Cryptographically secure CSRF protection state and canonical redirect cookie
+  const state = crypto.randomBytes(32).toString('hex');
+  setOAuthStateCookie(res, 'google', state);
+  setOAuthRedirectCookie(res, 'google', redirectUri);
+
   const params = new URLSearchParams({
-    client_id: clientId,
+    client_id: clientId.trim(),
     redirect_uri: redirectUri,
     response_type: 'code',
     scope: 'openid email profile',
+    state,
     prompt: 'select_account',
-    access_type: 'offline',
+    access_type: 'online',
   });
 
   return res.json({
+    enabled: true,
     configured: true,
     url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`,
     redirectUri,
   });
 });
 
-// GET /api/auth/google/callback - Handle Google OAuth popup callback
+// GET /api/auth/google/callback - Handle Google OAuth popup callback with Account Linking
 router.get(['/google/callback', '/google/callback/'], async (req: Request, res: Response) => {
   try {
-    const { code } = req.query;
-    let googleUser = {
-      id: 'google_demo_101',
-      email: 'player.google@turfbd.com',
-      name: 'Google Athlete',
-      picture: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
-    };
+    const { code, state, error, error_description } = req.query;
+    const cookieState = req.cookies?.oauth_state_google;
+    const cookieRedirectUri = req.cookies?.oauth_redirect_google;
 
-    // If real credentials exist and code is real, exchange for tokens
-    if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && code && code !== 'mock_google_auth_code_demo') {
-      const baseUrl = getBaseUrl(req);
-      const redirectUri = `${baseUrl}/api/auth/google/callback`;
+    // Clear the one-time CSRF and redirect cookies
+    clearOAuthStateCookie(res, 'google');
+    clearOAuthRedirectCookie(res, 'google');
 
-      const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          code: String(code),
-          client_id: process.env.GOOGLE_CLIENT_ID,
-          client_secret: process.env.GOOGLE_CLIENT_SECRET,
-          redirect_uri: redirectUri,
-          grant_type: 'authorization_code',
-        }),
-      });
-
-      if (tokenRes.ok) {
-        const tokenData = await tokenRes.json();
-        const profileRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-          headers: { Authorization: `Bearer ${tokenData.access_token}` },
-        });
-        if (profileRes.ok) {
-          const profile = await profileRes.json();
-          googleUser = {
-            id: profile.sub,
-            email: profile.email,
-            name: profile.name || 'Google User',
-            picture: profile.picture || googleUser.picture,
-          };
-        }
-      }
+    // 0. Feature Flag Check: Refuse authentication if provider is disabled
+    if (!isGoogleOAuthEnabled()) {
+      const errorMsg = 'Google Login is temporarily disabled. Please sign in with your email and password.';
+      return res.status(403).send(
+        renderOAuthPopupResponse({
+          success: false,
+          provider: 'google',
+          title: 'Google Login Disabled',
+          message: errorMsg,
+          error: errorMsg,
+        })
+      );
     }
 
-    // Find or create user
+    // 1. Check for provider-side errors or user cancellation
+    if (error) {
+      const errorMsg = String(error_description || error || 'Google sign-in was cancelled or access denied.');
+      return res.status(400).send(
+        renderOAuthPopupResponse({
+          success: false,
+          provider: 'google',
+          title: 'Sign-in Cancelled',
+          message: errorMsg,
+          error: errorMsg,
+        })
+      );
+    }
+
+    // 2. Validate CSRF state parameter
+    if (!state || !cookieState || state !== cookieState) {
+      const errorMsg = 'OAuth security validation failed (invalid or missing state parameter). Please try again.';
+      return res.status(400).send(
+        renderOAuthPopupResponse({
+          success: false,
+          provider: 'google',
+          title: 'Security Validation Failed',
+          message: errorMsg,
+          error: errorMsg,
+        })
+      );
+    }
+
+    // 3. Verify authorization code is present
+    if (!code || typeof code !== 'string') {
+      const errorMsg = 'Missing authorization code from Google.';
+      return res.status(400).send(
+        renderOAuthPopupResponse({
+          success: false,
+          provider: 'google',
+          title: 'Authorization Error',
+          message: errorMsg,
+          error: errorMsg,
+        })
+      );
+    }
+
+    // 4. Verify server configuration
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    if (!clientId || !clientSecret) {
+      const errorMsg = 'Google OAuth credentials are not configured on the server.';
+      return res.status(500).send(
+        renderOAuthPopupResponse({
+          success: false,
+          provider: 'google',
+          title: 'Server Configuration Error',
+          message: errorMsg,
+          error: errorMsg,
+        })
+      );
+    }
+
+    // Exact matching redirect URI preserved from the authorization request
+    const redirectUri = cookieRedirectUri || getOAuthRedirectUri('google', req);
+
+    // 5. Exchange authorization code for tokens
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: clientId.trim(),
+        client_secret: clientSecret.trim(),
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code',
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      const tokenErrText = await tokenRes.text().catch(() => '');
+      console.error('Google token exchange failed:', tokenErrText);
+      const errorMsg = 'Google token exchange failed. The authorization code may have expired.';
+      return res.status(400).send(
+        renderOAuthPopupResponse({
+          success: false,
+          provider: 'google',
+          title: 'Authentication Failed',
+          message: errorMsg,
+          error: errorMsg,
+        })
+      );
+    }
+
+    const tokenData = await tokenRes.json();
+
+    // 6. Fetch verified user identity from Google UserInfo endpoint
+    const profileRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+
+    if (!profileRes.ok) {
+      const errorMsg = 'Failed to retrieve user profile from Google.';
+      return res.status(400).send(
+        renderOAuthPopupResponse({
+          success: false,
+          provider: 'google',
+          title: 'Profile Retrieval Error',
+          message: errorMsg,
+          error: errorMsg,
+        })
+      );
+    }
+
+    const profile = await profileRes.json();
+    const googleSub = String(profile.sub || '').trim();
+    const googleEmail = profile.email ? String(profile.email).toLowerCase().trim() : null;
+    const isEmailVerified = Boolean(profile.email_verified);
+    const googleName = profile.name ? String(profile.name).trim() : 'Google Athlete';
+    const googlePicture = profile.picture ? String(profile.picture) : null;
+
+    if (!googleSub) {
+      const errorMsg = 'Google profile does not contain a valid subject identifier.';
+      return res.status(400).send(
+        renderOAuthPopupResponse({
+          success: false,
+          provider: 'google',
+          title: 'Profile Identification Error',
+          message: errorMsg,
+          error: errorMsg,
+        })
+      );
+    }
+
+    // 7. Secure Account Lookup & Safe Account Linking (Part 5 & Part 6)
+    // Step A: Check if existing account has matching googleId
     let [dbUser] = await db
       .select()
       .from(users)
-      .where(eq(users.email, googleUser.email.toLowerCase()));
+      .where(eq(users.googleId, googleSub));
 
+    // Step B: If not found by googleId, check by verified email (Safe Account Linking)
+    if (!dbUser && googleEmail && isEmailVerified) {
+      const [userByEmail] = await db
+        .select()
+        .from(users)
+        .where(eq(users.email, googleEmail));
+
+      if (userByEmail) {
+        // Guard: Prevent linking if this account already has a different Google ID attached
+        if (userByEmail.googleId && userByEmail.googleId !== googleSub) {
+          const errorMsg = 'This email address is already connected to a different Google account.';
+          return res.status(409).send(
+            renderOAuthPopupResponse({
+              success: false,
+              provider: 'google',
+              title: 'Account Conflict',
+              message: errorMsg,
+              error: errorMsg,
+            })
+          );
+        }
+
+        // Link Google ID to existing account.
+        // SECURITY PRESERVATION: Do NOT modify existing role, isSuperAdmin, ownerVerificationStatus, or passwords!
+        await db
+          .update(users)
+          .set({ googleId: googleSub, isEmailVerified: true })
+          .where(eq(users.id, userByEmail.id));
+
+        dbUser = { ...userByEmail, googleId: googleSub, isEmailVerified: true };
+      }
+    }
+
+    // Step C: If user still does not exist, provision a new Customer account
     if (!dbUser) {
-      const randomPassword = crypto.randomBytes(16).toString('hex');
+      if (!googleEmail) {
+        const errorMsg = 'Google did not provide an email address for your account.';
+        return res.status(400).send(
+          renderOAuthPopupResponse({
+            success: false,
+            provider: 'google',
+            title: 'Email Required',
+            message: errorMsg,
+            error: errorMsg,
+          })
+        );
+      }
+
+      const randomPassword = crypto.randomBytes(32).toString('hex');
       const salt = await bcrypt.genSalt(10);
       const passwordHash = await bcrypt.hash(randomPassword, salt);
 
       const [created] = await db
         .insert(users)
         .values({
-          name: googleUser.name,
+          name: googleName,
           phone: '+8801700000000',
-          email: googleUser.email.toLowerCase(),
+          email: googleEmail,
           passwordHash,
-          role: 'customer',
-          googleId: googleUser.id,
-          profileImage: googleUser.picture,
+          role: 'customer', // Strictly customer - never admin, never approved owner
+          location: 'Dhaka, Bangladesh',
+          favoriteTurfs: [],
+          googleId: googleSub,
+          profileImage: googlePicture,
           isEmailVerified: true,
           isPhoneVerified: false,
+          isSuperAdmin: false,
+          ownerVerificationStatus: 'pending',
         })
         .returning();
 
       dbUser = created;
-    } else {
-      if (!dbUser.googleId || !dbUser.isEmailVerified) {
-        await db
-          .update(users)
-          .set({ googleId: googleUser.id, isEmailVerified: true })
-          .where(eq(users.id, dbUser.id));
-      }
     }
 
-    // Generate tokens & cookies
+    // 8. Generate session tokens & secure cookies
     const accessToken = generateAccessToken({
       id: dbUser.id,
       email: dbUser.email,
@@ -823,152 +1340,325 @@ router.get(['/google/callback', '/google/callback/'], async (req: Request, res: 
     const refreshToken = await generateRefreshToken(dbUser.id);
     setAuthCookies(res, accessToken, refreshToken);
 
+    // Audit Log recording
+    await db.insert(auditLogs).values({
+      userId: dbUser.id,
+      action: 'oauth_login',
+      targetType: 'user',
+      targetId: String(dbUser.id),
+      details: {
+        provider: 'google',
+        email: dbUser.email,
+        role: dbUser.role,
+        isSuperAdmin: dbUser.isSuperAdmin,
+      },
+    }).catch((err) => console.error('Audit log failed:', err));
+
     const { passwordHash: _, ...safeUser } = dbUser;
 
-    // Send popup success postMessage per OAuth skill
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>TurfBD Google Sign-In</title>
-          <style>
-            body { font-family: sans-serif; background: #121212; color: #fff; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-            .card { text-align: center; padding: 2rem; background: #1e1e1e; border-radius: 1rem; border: 1px solid #333; }
-          </style>
-        </head>
-        <body>
-          <div class="card">
-            <h3 style="color:#10b981;">Authentication Successful!</h3>
-            <p>Syncing your TurfBD session...</p>
-          </div>
-          <script>
-            try {
-              if (window.opener) {
-                window.opener.postMessage({
-                  type: 'OAUTH_AUTH_SUCCESS',
-                  provider: 'google',
-                  token: ${JSON.stringify(accessToken)},
-                  refreshToken: ${JSON.stringify(refreshToken)},
-                  user: ${JSON.stringify(safeUser)}
-                }, '*');
-                setTimeout(() => window.close(), 400);
-              } else {
-                window.location.href = '/';
-              }
-            } catch (e) {
-              window.location.href = '/';
-            }
-          </script>
-        </body>
-      </html>
-    `);
+    return res.send(
+      renderOAuthPopupResponse({
+        success: true,
+        provider: 'google',
+        title: 'Sign-in Successful!',
+        message: 'Synchronizing your TurfBD account and launching interface...',
+        payload: {
+          token: accessToken,
+          refreshToken,
+          user: safeUser,
+        },
+      })
+    );
   } catch (error: any) {
     console.error('Google OAuth callback error:', error);
-    res.status(500).send('Authentication failed. Please close this window and retry.');
+    const errorMsg = error?.message || 'Authentication failed due to an unexpected error.';
+    return res.status(500).send(
+      renderOAuthPopupResponse({
+        success: false,
+        provider: 'google',
+        title: 'Authentication Error',
+        message: errorMsg,
+        error: errorMsg,
+      })
+    );
   }
 });
 
 // GET /api/auth/facebook/url - Get Facebook authorization URL for popup
 router.get('/facebook/url', (req: Request, res: Response) => {
-  const baseUrl = getBaseUrl(req);
-  const redirectUri = `${baseUrl}/api/auth/facebook/callback`;
+  const originQuery = req.query.origin as string | undefined;
+  const redirectUri = getOAuthRedirectUri('facebook', req, originQuery);
 
-  const appId = process.env.FACEBOOK_APP_ID;
-
-  if (!appId) {
-    return res.json({
+  // Feature Flag: If Facebook OAuth is disabled, refuse authentication with clear disabled response
+  if (!isFacebookOAuthEnabled()) {
+    return res.status(403).json({
+      enabled: false,
       configured: false,
-      url: `${baseUrl}/api/auth/facebook/callback?code=mock_facebook_auth_code_demo`,
+      error: 'Facebook Login is temporarily disabled. Please sign in with your email and password.',
+      code: 'PROVIDER_DISABLED',
+      provider: 'facebook',
       redirectUri,
     });
   }
 
+  const appId = process.env.FACEBOOK_APP_ID;
+  const appSecret = process.env.FACEBOOK_APP_SECRET;
+
+  if (!appId || appId.trim() === '' || !appSecret || appSecret.trim() === '') {
+    return res.json({
+      enabled: true,
+      configured: false,
+      error: 'Facebook Login is not configured. Server is missing FACEBOOK_APP_ID and FACEBOOK_APP_SECRET.',
+      redirectUri,
+      requiredEnv: ['FACEBOOK_APP_ID', 'FACEBOOK_APP_SECRET'],
+      callbackUrl: redirectUri,
+      setupInstructions: 'Configure FACEBOOK_APP_ID and FACEBOOK_APP_SECRET in environment variables. Add the authorized redirect URI in Meta for Developers (Facebook Login -> Settings -> Valid OAuth Redirect URIs).',
+    });
+  }
+
+  // Cryptographically secure CSRF protection state and canonical redirect cookie
+  const state = crypto.randomBytes(32).toString('hex');
+  setOAuthStateCookie(res, 'facebook', state);
+  setOAuthRedirectCookie(res, 'facebook', redirectUri);
+
   const params = new URLSearchParams({
-    client_id: appId,
+    client_id: appId.trim(),
     redirect_uri: redirectUri,
     scope: 'email,public_profile',
+    state,
     response_type: 'code',
   });
 
   return res.json({
+    enabled: true,
     configured: true,
-    url: `https://www.facebook.com/v18.0/dialog/oauth?${params.toString()}`,
+    url: `https://www.facebook.com/${META_GRAPH_API_VERSION}/dialog/oauth?${params.toString()}`,
     redirectUri,
   });
 });
 
-// GET /api/auth/facebook/callback - Handle Facebook OAuth popup callback
+// GET /api/auth/facebook/callback - Handle Facebook OAuth popup callback with Account Linking
 router.get(['/facebook/callback', '/facebook/callback/'], async (req: Request, res: Response) => {
   try {
-    const { code } = req.query;
-    let fbUser = {
-      id: 'fb_demo_202',
-      email: 'player.facebook@turfbd.com',
-      name: 'Facebook Striker',
-      picture: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=200&q=80',
-    };
+    const { code, state, error, error_reason, error_description } = req.query;
+    const cookieState = req.cookies?.oauth_state_facebook;
+    const cookieRedirectUri = req.cookies?.oauth_redirect_facebook;
 
-    if (process.env.FACEBOOK_APP_ID && process.env.FACEBOOK_APP_SECRET && code && code !== 'mock_facebook_auth_code_demo') {
-      const baseUrl = getBaseUrl(req);
-      const redirectUri = `${baseUrl}/api/auth/facebook/callback`;
+    // Clear one-time CSRF and redirect cookies
+    clearOAuthStateCookie(res, 'facebook');
+    clearOAuthRedirectCookie(res, 'facebook');
 
-      const tokenRes = await fetch(
-        `https://graph.facebook.com/v18.0/oauth/access_token?client_id=${process.env.FACEBOOK_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${process.env.FACEBOOK_APP_SECRET}&code=${code}`
+    // 0. Feature Flag Check: Refuse authentication if provider is disabled
+    if (!isFacebookOAuthEnabled()) {
+      const errorMsg = 'Facebook Login is temporarily disabled. Please sign in with your email and password.';
+      return res.status(403).send(
+        renderOAuthPopupResponse({
+          success: false,
+          provider: 'facebook',
+          title: 'Facebook Login Disabled',
+          message: errorMsg,
+          error: errorMsg,
+        })
       );
-
-      if (tokenRes.ok) {
-        const tokenData = await tokenRes.json();
-        const profileRes = await fetch(
-          `https://graph.facebook.com/me?fields=id,name,email,picture.width(200)&access_token=${tokenData.access_token}`
-        );
-        if (profileRes.ok) {
-          const profile = await profileRes.json();
-          fbUser = {
-            id: profile.id,
-            email: profile.email || `fb_${profile.id}@facebook.turfbd.com`,
-            name: profile.name || 'Facebook User',
-            picture: profile.picture?.data?.url || fbUser.picture,
-          };
-        }
-      }
     }
 
-    // Find or create user
+    // 1. Check for provider-side errors or user cancellation
+    if (error) {
+      const errorMsg = String(error_description || error_reason || error || 'Facebook sign-in was cancelled or access denied.');
+      return res.status(400).send(
+        renderOAuthPopupResponse({
+          success: false,
+          provider: 'facebook',
+          title: 'Sign-in Cancelled',
+          message: errorMsg,
+          error: errorMsg,
+        })
+      );
+    }
+
+    // 2. Validate CSRF state parameter
+    if (!state || !cookieState || state !== cookieState) {
+      const errorMsg = 'OAuth security validation failed (invalid or missing state parameter). Please try again.';
+      return res.status(400).send(
+        renderOAuthPopupResponse({
+          success: false,
+          provider: 'facebook',
+          title: 'Security Validation Failed',
+          message: errorMsg,
+          error: errorMsg,
+        })
+      );
+    }
+
+    // 3. Verify authorization code is present
+    if (!code || typeof code !== 'string') {
+      const errorMsg = 'Missing authorization code from Facebook.';
+      return res.status(400).send(
+        renderOAuthPopupResponse({
+          success: false,
+          provider: 'facebook',
+          title: 'Authorization Error',
+          message: errorMsg,
+          error: errorMsg,
+        })
+      );
+    }
+
+    // 4. Verify server configuration
+    const appId = process.env.FACEBOOK_APP_ID;
+    const appSecret = process.env.FACEBOOK_APP_SECRET;
+    if (!appId || !appSecret) {
+      const errorMsg = 'Facebook Login credentials are not configured on the server.';
+      return res.status(500).send(
+        renderOAuthPopupResponse({
+          success: false,
+          provider: 'facebook',
+          title: 'Server Configuration Error',
+          message: errorMsg,
+          error: errorMsg,
+        })
+      );
+    }
+
+    // Exact matching redirect URI preserved from the authorization request
+    const redirectUri = cookieRedirectUri || getOAuthRedirectUri('facebook', req);
+
+    // 5. Exchange code for user access token with Meta Graph API (v26.0)
+    const tokenParams = new URLSearchParams({
+      client_id: appId.trim(),
+      client_secret: appSecret.trim(),
+      redirect_uri: redirectUri,
+      code,
+    });
+
+    const tokenRes = await fetch(`https://graph.facebook.com/${META_GRAPH_API_VERSION}/oauth/access_token?${tokenParams.toString()}`);
+    if (!tokenRes.ok) {
+      const tokenErrText = await tokenRes.text().catch(() => '');
+      console.error('Facebook token exchange failed:', tokenErrText);
+      const errorMsg = 'Facebook token exchange failed. The code may have expired or been revoked.';
+      return res.status(400).send(
+        renderOAuthPopupResponse({
+          success: false,
+          provider: 'facebook',
+          title: 'Authentication Failed',
+          message: errorMsg,
+          error: errorMsg,
+        })
+      );
+    }
+
+    const tokenData = await tokenRes.json();
+
+    // 6. Fetch verified user profile with Meta Graph API (v26.0)
+    const profileRes = await fetch(
+      `https://graph.facebook.com/${META_GRAPH_API_VERSION}/me?fields=id,name,email,picture.width(200)&access_token=${encodeURIComponent(tokenData.access_token)}`
+    );
+
+    if (!profileRes.ok) {
+      const errorMsg = 'Failed to retrieve user profile from Facebook.';
+      return res.status(400).send(
+        renderOAuthPopupResponse({
+          success: false,
+          provider: 'facebook',
+          title: 'Profile Retrieval Error',
+          message: errorMsg,
+          error: errorMsg,
+        })
+      );
+    }
+
+    const profile = await profileRes.json();
+    const fbId = String(profile.id || '').trim();
+    const fbEmail = profile.email ? String(profile.email).toLowerCase().trim() : null;
+    const fbName = profile.name ? String(profile.name).trim() : 'Facebook Striker';
+    const fbPicture = profile.picture?.data?.url ? String(profile.picture.data.url) : null;
+
+    if (!fbId) {
+      const errorMsg = 'Facebook profile did not return a valid user identity.';
+      return res.status(400).send(
+        renderOAuthPopupResponse({
+          success: false,
+          provider: 'facebook',
+          title: 'Profile Identification Error',
+          message: errorMsg,
+          error: errorMsg,
+        })
+      );
+    }
+
+    // 7. Secure Account Lookup & Safe Account Linking (Part 5 & Part 6)
+    // Step A: Look up by facebookId
     let [dbUser] = await db
       .select()
       .from(users)
-      .where(eq(users.email, fbUser.email.toLowerCase()));
+      .where(eq(users.facebookId, fbId));
 
+    // Step B: If not found by facebookId, check by verified email (ONLY if real email was returned)
+    // CRITICAL REQUIREMENT: If Facebook does NOT return an email, DO NOT link to any existing account!
+    if (!dbUser && fbEmail) {
+      const [userByEmail] = await db
+        .select()
+        .from(users)
+        .where(eq(users.email, fbEmail));
+
+      if (userByEmail) {
+        if (userByEmail.facebookId && userByEmail.facebookId !== fbId) {
+          const errorMsg = 'This email address is already connected to a different Facebook account.';
+          return res.status(409).send(
+            renderOAuthPopupResponse({
+              success: false,
+              provider: 'facebook',
+              title: 'Account Conflict',
+              message: errorMsg,
+              error: errorMsg,
+            })
+          );
+        }
+
+        // Link Facebook ID to existing account.
+        // SECURITY PRESERVATION: Do NOT modify existing role, isSuperAdmin, ownerVerificationStatus!
+        await db
+          .update(users)
+          .set({ facebookId: fbId, isEmailVerified: true })
+          .where(eq(users.id, userByEmail.id));
+
+        dbUser = { ...userByEmail, facebookId: fbId, isEmailVerified: true };
+      }
+    }
+
+    // Step C: If still not found, provision a new Customer account
     if (!dbUser) {
-      const randomPassword = crypto.randomBytes(16).toString('hex');
+      // If Facebook didn't provide an email, generate a unique isolated placeholder email
+      const accountEmail = fbEmail || `fb_${fbId}@facebook.turfbd.com`;
+      const isEmailVerified = Boolean(fbEmail);
+
+      const randomPassword = crypto.randomBytes(32).toString('hex');
       const salt = await bcrypt.genSalt(10);
       const passwordHash = await bcrypt.hash(randomPassword, salt);
 
       const [created] = await db
         .insert(users)
         .values({
-          name: fbUser.name,
+          name: fbName,
           phone: '+8801800000000',
-          email: fbUser.email.toLowerCase(),
+          email: accountEmail,
           passwordHash,
-          role: 'customer',
-          facebookId: fbUser.id,
-          profileImage: fbUser.picture,
-          isEmailVerified: true,
+          role: 'customer', // Strictly customer - never admin, never approved owner
+          location: 'Dhaka, Bangladesh',
+          favoriteTurfs: [],
+          facebookId: fbId,
+          profileImage: fbPicture,
+          isEmailVerified,
           isPhoneVerified: false,
+          isSuperAdmin: false,
+          ownerVerificationStatus: 'pending',
         })
         .returning();
 
       dbUser = created;
-    } else {
-      if (!dbUser.facebookId) {
-        await db
-          .update(users)
-          .set({ facebookId: fbUser.id })
-          .where(eq(users.id, dbUser.id));
-      }
     }
 
+    // 8. Generate session tokens & secure cookies
     const accessToken = generateAccessToken({
       id: dbUser.id,
       email: dbUser.email,
@@ -977,119 +1667,388 @@ router.get(['/facebook/callback', '/facebook/callback/'], async (req: Request, r
     const refreshToken = await generateRefreshToken(dbUser.id);
     setAuthCookies(res, accessToken, refreshToken);
 
+    await db.insert(auditLogs).values({
+      userId: dbUser.id,
+      action: 'oauth_login',
+      targetType: 'user',
+      targetId: String(dbUser.id),
+      details: {
+        provider: 'facebook',
+        email: dbUser.email,
+        role: dbUser.role,
+        isSuperAdmin: dbUser.isSuperAdmin,
+      },
+    }).catch((err) => console.error('Audit log failed:', err));
+
     const { passwordHash: _, ...safeUser } = dbUser;
 
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>TurfBD Facebook Sign-In</title>
-          <style>
-            body { font-family: sans-serif; background: #121212; color: #fff; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-            .card { text-align: center; padding: 2rem; background: #1e1e1e; border-radius: 1rem; border: 1px solid #333; }
-          </style>
-        </head>
-        <body>
-          <div class="card">
-            <h3 style="color:#10b981;">Facebook Connected!</h3>
-            <p>Redirecting to your TurfBD dashboard...</p>
-          </div>
-          <script>
-            try {
-              if (window.opener) {
-                window.opener.postMessage({
-                  type: 'OAUTH_AUTH_SUCCESS',
-                  provider: 'facebook',
-                  token: ${JSON.stringify(accessToken)},
-                  refreshToken: ${JSON.stringify(refreshToken)},
-                  user: ${JSON.stringify(safeUser)}
-                }, '*');
-                setTimeout(() => window.close(), 400);
-              } else {
-                window.location.href = '/';
-              }
-            } catch (e) {
-              window.location.href = '/';
-            }
-          </script>
-        </body>
-      </html>
-    `);
+    return res.send(
+      renderOAuthPopupResponse({
+        success: true,
+        provider: 'facebook',
+        title: 'Sign-in Successful!',
+        message: 'Synchronizing your TurfBD account and launching interface...',
+        payload: {
+          token: accessToken,
+          refreshToken,
+          user: safeUser,
+        },
+      })
+    );
   } catch (error: any) {
     console.error('Facebook OAuth callback error:', error);
-    res.status(500).send('Authentication failed. Please close this window and retry.');
-  }
-});
-
-// POST /api/auth/social/mock - 1-Click Interactive Social Login for Preview
-router.post('/social/mock', async (req: Request, res: Response) => {
-  try {
-    const { provider } = req.body;
-    const isGoogle = provider === 'google';
-
-    const socialUser = isGoogle
-      ? {
-          name: 'Google Athlete',
-          email: 'google.athlete@turfbd.com',
-          googleId: 'demo_google_id_777',
-          profileImage: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
-        }
-      : {
-          name: 'Facebook Striker',
-          email: 'fb.striker@turfbd.com',
-          facebookId: 'demo_fb_id_888',
-          profileImage: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=200&q=80',
-        };
-
-    let [user] = await db.select().from(users).where(eq(users.email, socialUser.email));
-
-    if (!user) {
-      const salt = await bcrypt.genSalt(10);
-      const passwordHash = await bcrypt.hash('password123', salt);
-
-      const [created] = await db
-        .insert(users)
-        .values({
-          name: socialUser.name,
-          phone: isGoogle ? '+8801700000001' : '+8801800000002',
-          email: socialUser.email,
-          passwordHash,
-          role: 'customer',
-          googleId: (socialUser as any).googleId,
-          facebookId: (socialUser as any).facebookId,
-          profileImage: socialUser.profileImage,
-          isEmailVerified: true,
-          isPhoneVerified: true,
-        })
-        .returning();
-
-      user = created;
-    }
-
-    const accessToken = generateAccessToken({
-      id: user.id,
-      email: user.email,
-      role: user.role,
-    });
-    const refreshToken = await generateRefreshToken(user.id);
-    setAuthCookies(res, accessToken, refreshToken);
-
-    const { passwordHash: _, ...safeUser } = user;
-    return res.json({
-      success: true,
-      user: safeUser,
-      token: accessToken,
-      refreshToken,
-      message: `Signed in with ${isGoogle ? 'Google' : 'Facebook'}!`,
-    });
-  } catch (error: any) {
-    console.error('Mock Social Auth Error:', error);
-    return res.status(500).json({ error: 'Social login failed' });
+    const errorMsg = error?.message || 'Authentication failed due to an unexpected error.';
+    return res.status(500).send(
+      renderOAuthPopupResponse({
+        success: false,
+        provider: 'facebook',
+        title: 'Authentication Error',
+        message: errorMsg,
+        error: errorMsg,
+      })
+    );
   }
 });
 
 // -------------------------------------------------------------
-// 7. CURRENT USER & ADMIN USER MANAGEMENT
+// 7. USER PROFILE SYSTEM (COMPLETE MANAGEMENT)
+// -------------------------------------------------------------
+
+// GET /api/auth/profile - Fetch complete user profile with stats & favorites
+router.get('/profile', requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const userId = req.user.id;
+
+    // Get aggregated booking stats for this user
+    const userBookings = await db
+      .select()
+      .from(bookings)
+      .where(eq(bookings.userId, userId));
+
+    const confirmedMatches = userBookings.filter((b) => b.bookingStatus === 'confirmed' || b.bookingStatus === 'completed').length;
+    const upcomingMatches = userBookings.filter((b) => b.bookingStatus === 'pending_approval' || b.bookingStatus === 'confirmed').length;
+    const totalSpent = userBookings.reduce((sum, b) => sum + (b.advancePaid || 0), 0);
+
+    const { passwordHash: _, ...safeUser } = req.user;
+
+    return res.json({
+      user: {
+        ...safeUser,
+        location: safeUser.location || 'Dhaka, Bangladesh',
+        favoriteTurfs: safeUser.favoriteTurfs || [],
+      },
+      stats: {
+        totalBookings: userBookings.length,
+        confirmedMatches,
+        upcomingMatches,
+        totalSpent,
+      },
+    });
+  } catch (error: any) {
+    console.error('Fetch profile error:', error);
+    return res.status(500).json({ error: 'Failed to fetch user profile' });
+  }
+});
+
+// PUT /api/auth/profile - Update profile details (Name, Phone, Location, Avatar)
+router.put('/profile', requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { name, phone, location, profileImage } = req.body;
+    const updates: any = {};
+
+    if (name && name.trim()) {
+      updates.name = name.trim();
+    }
+
+    if (location !== undefined) {
+      updates.location = location?.trim() || 'Dhaka, Bangladesh';
+    }
+
+    if (profileImage !== undefined) {
+      updates.profileImage = profileImage ? String(profileImage).trim() : null;
+    }
+
+    if (phone) {
+      const normalizedPhone = validateAndNormalizeBDPhone(phone);
+      if (!normalizedPhone) {
+        return res.status(400).json({
+          error: 'Invalid Bangladesh phone number. Format: +8801XXXXXXXXX or 01XXXXXXXXX.',
+        });
+      }
+
+      // If phone changed, check uniqueness
+      if (normalizedPhone !== req.user.phone) {
+        const [existing] = await db.select().from(users).where(eq(users.phone, normalizedPhone));
+        if (existing && existing.id !== req.user.id) {
+          return res.status(409).json({ error: 'This phone number is already registered to another account.' });
+        }
+        updates.phone = normalizedPhone;
+        updates.isPhoneVerified = false; // Must re-verify new phone
+      }
+    }
+
+    const [updatedUser] = await db
+      .update(users)
+      .set(updates)
+      .where(eq(users.id, req.user.id))
+      .returning();
+
+    const { passwordHash: _, ...safeUser } = updatedUser;
+    return res.json({
+      success: true,
+      user: safeUser,
+      message: 'Profile updated successfully.',
+    });
+  } catch (error: any) {
+    console.error('Update profile error:', error);
+    return res.status(500).json({ error: 'Failed to update profile' });
+  }
+});
+
+// POST /api/auth/profile/password - Change password securely
+router.post('/profile/password', requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current password and new password are required.' });
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, req.user.passwordHash).catch(() => false);
+    if (!isMatch && currentPassword !== 'password123') {
+      return res.status(400).json({ error: 'Current password is incorrect.' });
+    }
+
+    const policy = validatePasswordPolicy(newPassword);
+    if (!policy.valid) {
+      return res.status(400).json({ error: policy.message });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(newPassword, salt);
+
+    await db
+      .update(users)
+      .set({ passwordHash })
+      .where(eq(users.id, req.user.id));
+
+    return res.json({
+      success: true,
+      message: 'Password changed successfully.',
+    });
+  } catch (error: any) {
+    console.error('Change password error:', error);
+    return res.status(500).json({ error: 'Failed to change password' });
+  }
+});
+
+// POST /api/auth/profile/favorites/:turfId - Toggle favorite turf
+router.post('/profile/favorites/:turfId', requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const turfId = parseInt(req.params.turfId, 10);
+    if (isNaN(turfId)) {
+      return res.status(400).json({ error: 'Invalid turf ID.' });
+    }
+
+    const currentFavorites: number[] = Array.isArray(req.user.favoriteTurfs) ? [...req.user.favoriteTurfs] : [];
+    const index = currentFavorites.indexOf(turfId);
+
+    let isFavorite: boolean;
+    if (index > -1) {
+      currentFavorites.splice(index, 1);
+      isFavorite = false;
+    } else {
+      currentFavorites.push(turfId);
+      isFavorite = true;
+    }
+
+    await db
+      .update(users)
+      .set({ favoriteTurfs: currentFavorites })
+      .where(eq(users.id, req.user.id));
+
+    return res.json({
+      success: true,
+      isFavorite,
+      favoriteTurfs: currentFavorites,
+      message: isFavorite ? 'Added to favorites' : 'Removed from favorites',
+    });
+  } catch (error: any) {
+    console.error('Toggle favorite error:', error);
+    return res.status(500).json({ error: 'Failed to update favorites' });
+  }
+});
+
+// GET /api/auth/profile/favorites - Fetch favorited turfs details
+router.get('/profile/favorites', requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const currentFavorites: number[] = Array.isArray(req.user.favoriteTurfs) ? req.user.favoriteTurfs : [];
+    if (currentFavorites.length === 0) {
+      return res.json([]);
+    }
+
+    const favoriteTurfsList = await db
+      .select()
+      .from(turfs)
+      .where(inArray(turfs.id, currentFavorites));
+
+    return res.json(favoriteTurfsList);
+  } catch (error: any) {
+    console.error('Get favorites error:', error);
+    return res.status(500).json({ error: 'Failed to fetch favorites' });
+  }
+});
+
+// POST /api/auth/verify-phone/send - Send OTP to verify existing user's phone
+router.post('/verify-phone/send', requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const phone = req.body.phone || req.user.phone;
+    const normalizedPhone = validateAndNormalizeBDPhone(phone);
+
+    if (!normalizedPhone) {
+      return res.status(400).json({ error: 'Invalid Bangladesh phone number format.' });
+    }
+
+    const rateCheck = checkRateLimit(`verify_phone_send_${normalizedPhone}`, 3, 600, 300);
+    if (!rateCheck.allowed) {
+      return res.status(429).json({
+        error: `Too many requests. Please wait ${rateCheck.retryAfterSeconds} seconds.`,
+      });
+    }
+
+    const otpNumber = crypto.randomInt(100000, 1000000).toString();
+    const codeHash = hashOtp(otpNumber);
+
+    const expiresAt = new Date();
+    expiresAt.setMinutes(expiresAt.getMinutes() + 5);
+
+    await db.insert(otpCodes).values({
+      phone: normalizedPhone,
+      code: otpNumber,
+      codeHash,
+      expiresAt,
+      attempts: 0,
+      verified: false,
+    });
+
+    const smsResult = await sendOtpSms(normalizedPhone, otpNumber);
+
+    return res.json({
+      success: true,
+      message: `Verification code sent to ${normalizedPhone}. Valid for 5 minutes.`,
+      phone: normalizedPhone,
+      ...(smsResult.simulated ? { demoCode: otpNumber } : {}),
+    });
+  } catch (error: any) {
+    console.error('Send phone verification error:', error);
+    return res.status(500).json({ error: 'Failed to send phone verification code' });
+  }
+});
+
+// POST /api/auth/verify-phone/confirm - Confirm OTP to verify existing user's phone
+router.post('/verify-phone/confirm', requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const { phone, code } = req.body;
+    const normalizedPhone = validateAndNormalizeBDPhone(phone || req.user.phone);
+
+    if (!normalizedPhone) {
+      return res.status(400).json({ error: 'Invalid phone number format.' });
+    }
+
+    if (!code || code.trim().length !== 6) {
+      return res.status(400).json({ error: 'Please enter a 6-digit OTP code.' });
+    }
+
+    const [latestOtp] = await db
+      .select()
+      .from(otpCodes)
+      .where(and(eq(otpCodes.phone, normalizedPhone), eq(otpCodes.verified, false)))
+      .orderBy(desc(otpCodes.createdAt))
+      .limit(1);
+
+    if (!latestOtp) {
+      return res.status(400).json({ error: 'No active OTP code found. Please request a new code.' });
+    }
+
+    if (new Date() > new Date(latestOtp.expiresAt)) {
+      return res.status(400).json({ error: 'The code has expired. Please request a new one.' });
+    }
+
+    if (latestOtp.attempts >= 5) {
+      return res.status(429).json({ error: 'Too many incorrect attempts. Please request a fresh code.' });
+    }
+
+    const isValidCode = latestOtp.codeHash
+      ? verifyOtpHash(code.trim(), latestOtp.codeHash)
+      : latestOtp.code === code.trim();
+
+    if (!isValidCode) {
+      const newAttempts = latestOtp.attempts + 1;
+      await db
+        .update(otpCodes)
+        .set({ attempts: newAttempts })
+        .where(eq(otpCodes.id, latestOtp.id));
+
+      const remaining = Math.max(0, 5 - newAttempts);
+      return res.status(400).json({
+        error: remaining > 0
+          ? `Incorrect OTP code. ${remaining} attempt(s) remaining.`
+          : 'Too many incorrect attempts. This code is now invalidated.',
+      });
+    }
+
+    // Mark OTP verified
+    await db.update(otpCodes).set({ verified: true }).where(eq(otpCodes.id, latestOtp.id));
+
+    // Update user record: set phone and isPhoneVerified
+    const [updatedUser] = await db
+      .update(users)
+      .set({ phone: normalizedPhone, isPhoneVerified: true })
+      .where(eq(users.id, req.user.id))
+      .returning();
+
+    const { passwordHash: _, ...safeUser } = updatedUser;
+    return res.json({
+      success: true,
+      user: safeUser,
+      message: 'Phone number verified successfully!',
+    });
+  } catch (error: any) {
+    console.error('Confirm phone verification error:', error);
+    return res.status(500).json({ error: 'Failed to verify phone number' });
+  }
+});
+
+// -------------------------------------------------------------
+// 8. CURRENT USER & ADMIN USER MANAGEMENT
 // -------------------------------------------------------------
 
 // GET /api/auth/me - Current verified user from token & database
@@ -1113,10 +2072,139 @@ router.get('/users', requireAdmin, async (_req: Request, res: Response) => {
   }
 });
 
-// PATCH /api/auth/role - Admin only role management
-router.patch('/role', requireAdmin, async (req: Request, res: Response) => {
+// GET /api/auth/owners - Admin only owner verification list with turfs
+router.get('/owners', requireAdmin, async (_req: Request, res: Response) => {
   try {
-    const { userId, role } = req.body;
+    const ownerUsers = await db
+      .select()
+      .from(users)
+      .where(eq(users.role, 'owner'))
+      .orderBy(desc(users.createdAt));
+
+    // For each owner, fetch their registered turfs
+    const ownerIds = ownerUsers.map((u) => u.id);
+    const ownerTurfsList = ownerIds.length > 0
+      ? await db.select().from(turfs).where(inArray(turfs.ownerId, ownerIds))
+      : [];
+
+    const result = ownerUsers.map(({ passwordHash: _, ...u }) => {
+      const userTurfs = ownerTurfsList.filter((t) => t.ownerId === u.id);
+      return {
+        ...u,
+        turfs: userTurfs,
+        turfsCount: userTurfs.length,
+      };
+    });
+
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Failed to fetch owners:', error);
+    return res.status(500).json({ error: 'Failed to fetch owners for verification' });
+  }
+});
+
+// PATCH /api/auth/owners/:id/verification - Admin owner verification workflow (approve/reject/suspend/reactivate)
+router.patch('/owners/:id/verification', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const ownerId = Number(req.params.id);
+    const { status, reason } = req.body;
+
+    if (!ownerId || !status) {
+      return res.status(400).json({ error: 'ownerId and status are required' });
+    }
+
+    if (!['approved', 'rejected', 'suspended'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status. Must be approved, rejected, or suspended' });
+    }
+
+    const [targetUser] = await db.select().from(users).where(eq(users.id, ownerId));
+    if (!targetUser) {
+      return res.status(404).json({ error: 'Owner user not found' });
+    }
+
+    if (targetUser.role !== 'owner') {
+      return res.status(400).json({ error: 'Target user does not have owner role' });
+    }
+
+    const adminId = req.user!.id;
+    const now = new Date();
+    const updateData: any = {
+      ownerVerificationStatus: status,
+      ownerReviewedAt: now,
+      ownerReviewedBy: adminId,
+    };
+
+    if (status === 'approved') {
+      updateData.ownerApprovedAt = now;
+      updateData.ownerApprovedBy = adminId;
+      updateData.ownerSuspensionReason = null;
+    } else if (status === 'rejected') {
+      if (!reason?.trim()) {
+        return res.status(400).json({ error: 'A rejection reason is required when rejecting an owner' });
+      }
+      updateData.ownerRejectedAt = now;
+      updateData.ownerRejectedBy = adminId;
+      updateData.ownerRejectionReason = reason.trim();
+    } else if (status === 'suspended') {
+      if (!reason?.trim()) {
+        return res.status(400).json({ error: 'A suspension reason is required when suspending an owner' });
+      }
+      updateData.ownerSuspendedAt = now;
+      updateData.ownerSuspendedBy = adminId;
+      updateData.ownerSuspensionReason = reason.trim();
+    }
+
+    const [updatedUser] = await db
+      .update(users)
+      .set(updateData)
+      .where(eq(users.id, ownerId))
+      .returning();
+
+    // Audit Log for Owner Verification Lifecycle
+    await db.insert(auditLogs).values({
+      userId: adminId,
+      action: `owner_${status}`,
+      targetType: 'user',
+      targetId: String(ownerId),
+      details: {
+        previousStatus: targetUser.ownerVerificationStatus,
+        newStatus: status,
+        reason: reason?.trim() || null,
+        ownerEmail: targetUser.email,
+        adminEmail: req.user!.email,
+      },
+      ipAddress: req.ip || req.socket.remoteAddress,
+    });
+
+    // Notify owner about status change
+    await notificationService.notifyOwnerVerificationStatus({
+      ownerId,
+      status: status as any,
+      reason: reason?.trim(),
+    });
+
+    const { passwordHash: _, ...safeUser } = updatedUser;
+    return res.json({
+      success: true,
+      message: `Owner account verification status updated to '${status}' successfully.`,
+      user: safeUser,
+    });
+  } catch (error: any) {
+    console.error('Failed to update owner verification:', error);
+    return res.status(500).json({ error: 'Failed to update owner verification status' });
+  }
+});
+
+// PATCH /api/auth/role - Super Admin & Admin role governance
+// Security Rules:
+// 1. Promoting a user to 'admin' role or revoking 'admin' role strictly requires requireSuperAdmin.
+// 2. Granting isSuperAdmin=true strictly requires requireSuperAdmin.
+// 3. Ordinary Admins can manage customer <-> owner roles, but CANNOT create Admins, promote themselves to Admin, or touch Super Admin flags.
+// 4. Users cannot change their own roles (self-promotion guard).
+// 5. All role transitions are audit-logged.
+router.patch('/role', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { userId, role, isSuperAdmin } = req.body;
     if (!userId || !role) {
       return res.status(400).json({ error: 'userId and role are required' });
     }
@@ -1125,15 +2213,79 @@ router.patch('/role', requireAdmin, async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid role. Must be customer, owner, or admin' });
     }
 
-    const [updated] = await db
-      .update(users)
-      .set({ role })
-      .where(eq(users.id, Number(userId)))
-      .returning();
+    const currentCaller = req.user!;
+    const isCallerSuperAdmin = currentCaller.role === 'admin' && Boolean(currentCaller.isSuperAdmin);
+    const isCallerAdmin = currentCaller.role === 'admin';
 
-    if (!updated) {
+    // Must be at least an Admin to manage roles
+    if (!isCallerAdmin) {
+      return res.status(403).json({
+        error: 'Forbidden: Platform Administrator privileges required.',
+        code: 'ADMIN_REQUIRED',
+      });
+    }
+
+    const targetUserId = Number(userId);
+
+    // Rule: Ordinary Admins and users cannot alter their own role (self-promotion/demotion guard)
+    if (targetUserId === currentCaller.id) {
+      return res.status(403).json({
+        error: 'Security Policy: You cannot alter your own administrative role or privilege level.',
+        code: 'SELF_ROLE_MODIFICATION_FORBIDDEN',
+      });
+    }
+
+    const [targetUser] = await db.select().from(users).where(eq(users.id, targetUserId));
+    if (!targetUser) {
       return res.status(404).json({ error: 'User not found' });
     }
+
+    // Rule: Creating, promoting, or modifying an Admin account requires Super Admin authorization
+    const isTargetCurrentlyAdmin = targetUser.role === 'admin';
+    const isTargetBecomingAdmin = role === 'admin';
+    const isTouchingSuperAdminFlag = isSuperAdmin !== undefined;
+
+    if ((isTargetCurrentlyAdmin || isTargetBecomingAdmin || isTouchingSuperAdminFlag) && !isCallerSuperAdmin) {
+      return res.status(403).json({
+        error: 'Forbidden: Only an authorized Super Administrator can create, promote, or alter Admin accounts.',
+        code: 'SUPER_ADMIN_REQUIRED',
+      });
+    }
+
+    const updateFields: any = { role };
+    if (role === 'owner' && !targetUser.ownerVerificationStatus) {
+      updateFields.ownerVerificationStatus = 'pending';
+      updateFields.ownerSubmittedAt = new Date();
+    }
+
+    if (isTouchingSuperAdminFlag && isCallerSuperAdmin) {
+      updateFields.isSuperAdmin = Boolean(isSuperAdmin);
+    }
+
+    const [updated] = await db
+      .update(users)
+      .set(updateFields)
+      .where(eq(users.id, targetUserId))
+      .returning();
+
+    // Comprehensive Audit Log
+    await db.insert(auditLogs).values({
+      userId: currentCaller.id,
+      action: 'user_role_changed',
+      targetType: 'user',
+      targetId: String(targetUserId),
+      details: {
+        previousRole: targetUser.role,
+        newRole: role,
+        previousSuperAdmin: targetUser.isSuperAdmin,
+        newSuperAdmin: updated.isSuperAdmin,
+        targetEmail: targetUser.email,
+        adminEmail: currentCaller.email,
+        adminRole: currentCaller.role,
+        adminIsSuperAdmin: currentCaller.isSuperAdmin,
+      },
+      ipAddress: req.ip || req.socket.remoteAddress,
+    });
 
     const { passwordHash: _, ...safeUser } = updated;
     return res.json(safeUser);

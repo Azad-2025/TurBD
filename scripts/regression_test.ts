@@ -1,3 +1,7 @@
+import { db } from '../src/db/index.ts';
+import { otpCodes, users } from '../src/db/schema.ts';
+import { eq, desc } from 'drizzle-orm';
+
 async function runRegressionTests() {
   const BASE_URL = 'http://127.0.0.1:3000';
   console.log('====================================================');
@@ -71,8 +75,20 @@ async function runRegressionTests() {
       body: JSON.stringify({ phone: customerPhone }),
     });
     const otpReqData = await otpReq.json();
-    if (!otpReq.ok || !otpReqData.demoCode) {
+    if (!otpReq.ok) {
       throw new Error(`OTP send failed: ${JSON.stringify(otpReqData)}`);
+    }
+
+    // Retrieve generated OTP code directly from database (ensuring zero demoCode exposure in HTTP response)
+    const [latestOtp] = await db
+      .select()
+      .from(otpCodes)
+      .where(eq(otpCodes.phone, customerPhone))
+      .orderBy(desc(otpCodes.createdAt))
+      .limit(1);
+
+    if (!latestOtp || !latestOtp.code) {
+      throw new Error(`OTP code was not recorded in database for ${customerPhone}`);
     }
 
     const otpVerify = await fetch(`${BASE_URL}/api/auth/otp/verify`, {
@@ -80,7 +96,7 @@ async function runRegressionTests() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         phone: customerPhone,
-        code: otpReqData.demoCode,
+        code: latestOtp.code,
       }),
     });
     const otpVerifyData = await otpVerify.json();
@@ -168,7 +184,7 @@ async function runRegressionTests() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: 'owner@gulshanarena.com',
-        password: 'password123',
+        password: 'Password123!',
       }),
     });
     const ownerData = await ownerLogin.json();
@@ -224,7 +240,7 @@ async function runRegressionTests() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: 'admin@turfbd.com',
-        password: 'password123',
+        password: 'Password123!',
       }),
     });
     const adminData = await adminLogin.json();

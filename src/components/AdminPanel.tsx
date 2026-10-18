@@ -20,9 +20,15 @@ import {
   FileText,
   Clock,
   Phone,
+  Radio,
+  Activity,
 } from 'lucide-react';
 import { Turf, Booking, UserRole } from '../types';
 import { BookingDetailsModal } from './BookingDetailsModal';
+import { CommandCenterView } from './admin/CommandCenterView';
+import { OwnerVerificationView } from './admin/OwnerVerificationView';
+import { AdminPayoutsView } from './admin/AdminPayoutsView';
+import { AdminDisputesView } from './admin/AdminDisputesView';
 
 export const AdminPanel: React.FC = () => {
   const {
@@ -32,16 +38,39 @@ export const AdminPanel: React.FC = () => {
     users,
     setTurfStatus,
     updateTurf,
-    switchRole,
     updateUserRole,
     updateBookingStatus,
     refreshBookings,
+    setActiveTab: setAppTab,
   } = useApp();
 
-  const [activeTab, setActiveTab] = useState<'pending-turfs' | 'all-turfs' | 'bookings' | 'users' | 'reports'>('pending-turfs');
+  const [activeTab, setActiveTab] = useState<'command-center' | 'owner-verifications' | 'payouts' | 'disputes' | 'pending-turfs' | 'all-turfs' | 'bookings' | 'users' | 'reports'>('command-center');
   const [searchFilter, setSearchFilter] = useState('');
   const [reportData, setReportData] = useState<any>(null);
   const [loadingReport, setLoadingReport] = useState(false);
+
+  // Strict Super Admin Access Guard
+  if (!currentUser || currentUser.role !== 'admin') {
+    return (
+      <div className="max-w-xl mx-auto px-4 py-20 text-center" id="admin-access-denied">
+        <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-card">
+          <div className="w-14 h-14 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto mb-4 border border-rose-100">
+            <ShieldCheck className="w-7 h-7" />
+          </div>
+          <h2 className="text-xl font-black text-[#0F172A] mb-2">Admin Authorization Required</h2>
+          <p className="text-xs text-[#64748B] mb-6 leading-relaxed">
+            The TurfBD Command Center is restricted to verified Super Administrators. Your authenticated role ({currentUser?.role || 'Guest'}) does not have permission to access global audits or platform controls.
+          </p>
+          <button
+            onClick={() => setAppTab('home')}
+            className="px-5 py-2.5 bg-[#0FA958] hover:bg-[#0D944D] text-white font-bold rounded-xl text-xs transition-colors cursor-pointer"
+          >
+            Return to Homepage
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Admin Bookings filter states
   const [bookingDateFilter, setBookingDateFilter] = useState<string>('');
@@ -69,15 +98,41 @@ export const AdminPanel: React.FC = () => {
   const totalVolume = bookings
     .filter((b) => b.status !== 'cancelled')
     .reduce((acc, b) => acc + b.totalAmount, 0);
+  const platformFeeCommission = Math.round(totalVolume * 0.05);
 
-  const platformFeeCommission = Math.round(totalVolume * 0.05); // 5% platform fee
+  // Turf moderation modal state
+  const [moderationModalTurf, setModerationModalTurf] = useState<Turf | null>(null);
+  const [moderationModalAction, setModerationModalAction] = useState<'reject' | 'suspend'>('reject');
+  const [moderationReason, setModerationReason] = useState<string>('');
+  const [moderationError, setModerationError] = useState<string | null>(null);
 
   const handleApprove = (turfId: string) => {
     setTurfStatus(turfId, 'approved');
   };
 
-  const handleReject = (turfId: string) => {
-    setTurfStatus(turfId, 'rejected');
+  const handleOpenRejectModal = (turf: Turf) => {
+    setModerationModalTurf(turf);
+    setModerationModalAction('reject');
+    setModerationReason('');
+    setModerationError(null);
+  };
+
+  const handleOpenSuspendModal = (turf: Turf) => {
+    setModerationModalTurf(turf);
+    setModerationModalAction('suspend');
+    setModerationReason('');
+    setModerationError(null);
+  };
+
+  const handleConfirmModeration = async () => {
+    if (!moderationModalTurf) return;
+    if (!moderationReason.trim()) {
+      setModerationError(`A specific reason is required to ${moderationModalAction} this venue.`);
+      return;
+    }
+    const targetStatus = moderationModalAction === 'reject' ? 'rejected' : 'suspended';
+    await setTurfStatus(moderationModalTurf.id, targetStatus, moderationReason.trim());
+    setModerationModalTurf(null);
   };
 
   const handleToggleFeature = (turf: Turf) => {
@@ -85,94 +140,107 @@ export const AdminPanel: React.FC = () => {
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8" id="admin-panel-page">
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 text-[#0F172A]" id="admin-panel-page">
       {/* Admin Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 bg-white p-6 rounded-2xl border border-slate-200 shadow-card">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-purple-500/20 text-purple-400 border border-purple-500/40">
+          <div className="flex items-center gap-2 mb-1.5">
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-emerald-50 text-[#064E3B] border border-emerald-200">
               TurfBD Platform HQ
             </span>
-            <span className="text-xs text-neutral-400">
-              Logged in as Super Admin <strong className="text-white">{currentUser?.name}</strong>
+            <span className="text-xs text-[#64748B]">
+              Logged in as Super Admin <strong className="text-[#0F172A]">{currentUser?.name}</strong>
             </span>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-            TurfBD Admin Operations
+          <h1 className="text-2xl sm:text-3xl font-black text-[#0F172A] tracking-tight flex items-center gap-3">
+            <span>TurfBD Command Center</span>
+            <span className="px-3 py-1 bg-emerald-50 text-[#064E3B] border border-emerald-200 text-xs font-mono font-bold rounded-xl hidden sm:inline-flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-[#0FA958] animate-pulse" />
+              <span>Health: 92/100</span>
+            </span>
           </h1>
-          <p className="text-xs text-neutral-400">
+          <p className="text-xs text-[#64748B] mt-1">
             Moderate turf registrations, audit MFS transactions, review system metrics, and manage user roles.
           </p>
         </div>
 
-        {currentUser?.role !== 'admin' && (
-          <button
-            onClick={() => switchRole('admin')}
-            className="px-3.5 py-2 bg-purple-500/20 text-purple-300 text-xs font-bold rounded-xl border border-purple-500/40"
-          >
-            Switch to Admin Persona
-          </button>
-        )}
-      </div>
-
-      {/* Platform Analytics Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
-          <div className="text-[11px] font-bold uppercase tracking-wider text-neutral-400 mb-1">
-            Gross Booking Volume
-          </div>
-          <div className="text-2xl font-black text-emerald-400 font-mono">
-            ৳{totalVolume.toLocaleString()}
-          </div>
-          <div className="text-[10px] text-neutral-500 mt-1">Across all Bangladesh venues</div>
-        </div>
-
-        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
-          <div className="text-[11px] font-bold uppercase tracking-wider text-neutral-400 mb-1">
-            TurfBD Commission (5%)
-          </div>
-          <div className="text-2xl font-black text-purple-400 font-mono">
-            ৳{platformFeeCommission.toLocaleString()}
-          </div>
-          <div className="text-[10px] text-neutral-500 mt-1">Net platform service revenue</div>
-        </div>
-
-        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
-          <div className="text-[11px] font-bold uppercase tracking-wider text-neutral-400 mb-1">
-            Turf Approvals Queue
-          </div>
-          <div className="text-2xl font-black text-amber-400">
-            {pendingTurfs.length} Pending
-          </div>
-          <div className="text-[10px] text-neutral-500 mt-1">
-            {approvedTurfs.length} currently live & active
-          </div>
-        </div>
-
-        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
-          <div className="text-[11px] font-bold uppercase tracking-wider text-neutral-400 mb-1">
-            Total Matches Reserved
-          </div>
-          <div className="text-2xl font-black text-white font-mono">
-            {bookings.length} Bookings
-          </div>
-          <div className="text-[10px] text-neutral-500 mt-1">
-            {bookings.filter((b) => b.status === 'confirmed').length} confirmed matches
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Live Status Pills */}
+          <div className="flex items-center gap-2 px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[11px] font-medium text-slate-700">
+            <span className="flex items-center gap-1.5 text-[#064E3B] font-semibold">
+              <span className="w-2 h-2 rounded-full bg-[#0FA958] animate-ping" />
+              System Online
+            </span>
+            <span className="text-slate-300">•</span>
+            <span className="flex items-center gap-1.5 text-[#064E3B] font-semibold">
+              <span className="w-2 h-2 rounded-full bg-[#0FA958]" />
+              Gateways Active
+            </span>
           </div>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex bg-neutral-900 border border-neutral-800 p-1 rounded-2xl mb-6 overflow-x-auto">
+      <div className="flex bg-white border border-slate-200 p-1.5 rounded-2xl mb-6 overflow-x-auto shadow-card gap-1">
+        <button
+          onClick={() => setActiveTab('command-center')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-2 cursor-pointer ${
+            activeTab === 'command-center' ? 'bg-[#064E3B] text-white shadow-soft' : 'text-[#64748B] hover:text-[#0F172A] hover:bg-slate-50'
+          }`}
+          id="tab-command-center"
+        >
+          <Radio className={`w-3.5 h-3.5 ${activeTab === 'command-center' ? 'text-white' : 'text-[#0FA958]'} animate-pulse`} />
+          <span>Command Center</span>
+          <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-black ${
+            activeTab === 'command-center' ? 'bg-[#0FA958] text-white' : 'bg-emerald-50 text-[#064E3B] border border-emerald-200'
+          }`}>
+            92/100
+          </span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('owner-verifications')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+            activeTab === 'owner-verifications' ? 'bg-[#064E3B] text-white shadow-soft' : 'text-[#64748B] hover:text-[#0F172A] hover:bg-slate-50'
+          }`}
+          id="tab-owner-verifications"
+        >
+          <ShieldCheck className="w-3.5 h-3.5" />
+          <span>Owner Verifications</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('payouts')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+            activeTab === 'payouts' ? 'bg-[#064E3B] text-white shadow-soft' : 'text-[#64748B] hover:text-[#0F172A] hover:bg-slate-50'
+          }`}
+          id="tab-payouts"
+        >
+          <DollarSign className="w-3.5 h-3.5" />
+          <span>Payout Requests</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('disputes')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+            activeTab === 'disputes' ? 'bg-[#064E3B] text-white shadow-soft' : 'text-[#64748B] hover:text-[#0F172A] hover:bg-slate-50'
+          }`}
+          id="tab-disputes"
+        >
+          <AlertTriangle className="w-3.5 h-3.5" />
+          <span>Disputes &amp; Claims</span>
+        </button>
+
         <button
           onClick={() => setActiveTab('pending-turfs')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 ${
-            activeTab === 'pending-turfs' ? 'bg-neutral-800 text-amber-400 shadow' : 'text-neutral-400 hover:text-white'
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+            activeTab === 'pending-turfs' ? 'bg-[#064E3B] text-white shadow-soft' : 'text-[#64748B] hover:text-[#0F172A] hover:bg-slate-50'
           }`}
+          id="tab-pending-turfs"
         >
           <span>Pending Approvals</span>
           {pendingTurfs.length > 0 && (
-            <span className="w-5 h-5 rounded-full bg-amber-500 text-neutral-950 font-black text-[10px] flex items-center justify-center">
+            <span className="w-5 h-5 rounded-full bg-amber-500 text-white font-black text-[10px] flex items-center justify-center">
               {pendingTurfs.length}
             </span>
           )}
@@ -180,106 +248,179 @@ export const AdminPanel: React.FC = () => {
 
         <button
           onClick={() => setActiveTab('all-turfs')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
-            activeTab === 'all-turfs' ? 'bg-neutral-800 text-emerald-400 shadow' : 'text-neutral-400 hover:text-white'
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+            activeTab === 'all-turfs' ? 'bg-[#064E3B] text-white shadow-soft' : 'text-[#64748B] hover:text-[#0F172A] hover:bg-slate-50'
           }`}
+          id="tab-all-turfs"
         >
           All Listed Venues ({turfs.length})
         </button>
 
         <button
           onClick={() => setActiveTab('bookings')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
-            activeTab === 'bookings' ? 'bg-neutral-800 text-emerald-400 shadow' : 'text-neutral-400 hover:text-white'
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+            activeTab === 'bookings' ? 'bg-[#064E3B] text-white shadow-soft' : 'text-[#64748B] hover:text-[#0F172A] hover:bg-slate-50'
           }`}
+          id="tab-bookings"
         >
           Global Bookings Audit ({bookings.length})
         </button>
 
         <button
           onClick={() => setActiveTab('users')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
-            activeTab === 'users' ? 'bg-neutral-800 text-emerald-400 shadow' : 'text-neutral-400 hover:text-white'
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+            activeTab === 'users' ? 'bg-[#064E3B] text-white shadow-soft' : 'text-[#64748B] hover:text-[#0F172A] hover:bg-slate-50'
           }`}
+          id="tab-users"
         >
-          Registered Users & Roles
+          Registered Users &amp; Roles
         </button>
 
         <button
           onClick={() => setActiveTab('reports')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 ${
-            activeTab === 'reports' ? 'bg-neutral-800 text-purple-400 shadow' : 'text-neutral-400 hover:text-white'
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+            activeTab === 'reports' ? 'bg-[#064E3B] text-white shadow-soft' : 'text-[#64748B] hover:text-[#0F172A] hover:bg-slate-50'
           }`}
+          id="tab-reports"
         >
           <BarChart3 className="w-3.5 h-3.5" />
-          <span>Analytics & Reports</span>
+          <span>Analytics &amp; Reports</span>
         </button>
       </div>
+
+      {/* COMMAND CENTER TAB */}
+      {activeTab === 'command-center' && (
+        <CommandCenterView onNavigateToTab={(tab: any) => setActiveTab(tab)} />
+      )}
+
+      {/* Platform Analytics Cards (Shown when not on main command center) */}
+      {activeTab !== 'command-center' && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-card">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+              Gross Booking Volume
+            </div>
+            <div className="text-2xl font-black text-[#064E3B] font-mono">
+              BDT {totalVolume.toLocaleString()}
+            </div>
+            <div className="text-[10px] text-slate-500 mt-1">Across all Bangladesh venues</div>
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-card">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+              TurfBD Commission (5%)
+            </div>
+            <div className="text-2xl font-black text-[#0FA958] font-mono">
+              BDT {platformFeeCommission.toLocaleString()}
+            </div>
+            <div className="text-[10px] text-slate-500 mt-1">Net platform service revenue</div>
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-card">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+              Turf Approvals Queue
+            </div>
+            <div className="text-2xl font-black text-amber-600">
+              {pendingTurfs.length} Pending
+            </div>
+            <div className="text-[10px] text-slate-500 mt-1">
+              {approvedTurfs.length} currently live &amp; active
+            </div>
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-card">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+              Total Matches Reserved
+            </div>
+            <div className="text-2xl font-black text-[#0F172A] font-mono">
+              {bookings.length} Bookings
+            </div>
+            <div className="text-[10px] text-slate-500 mt-1">
+              {bookings.filter((b) => b.status === 'confirmed').length} confirmed matches
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* OWNER VERIFICATIONS TAB */}
+      {activeTab === 'owner-verifications' && (
+        <OwnerVerificationView />
+      )}
+
+      {/* PAYOUT REQUESTS TAB */}
+      {activeTab === 'payouts' && (
+        <AdminPayoutsView />
+      )}
+
+      {/* DISPUTES & REFUND CLAIMS TAB */}
+      {activeTab === 'disputes' && (
+        <AdminDisputesView />
+      )}
 
       {/* PENDING APPROVALS QUEUE */}
       {activeTab === 'pending-turfs' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-base font-bold text-white">Turfs Awaiting Platform Verification</h3>
-            <span className="text-xs text-neutral-400">
+            <h3 className="text-base font-bold text-[#0F172A]">Turfs Awaiting Platform Verification</h3>
+            <span className="text-xs text-[#64748B]">
               Check ground quality, owner credentials, and pricing compliance
             </span>
           </div>
 
           {pendingTurfs.length === 0 ? (
-            <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-10 text-center space-y-2">
-              <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto">
-                <CheckCircle2 className="w-6 h-6" />
+            <div className="bg-white border border-slate-200 rounded-3xl p-10 text-center space-y-2 shadow-card">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-[#064E3B] border border-emerald-200 flex items-center justify-center mx-auto">
+                <CheckCircle2 className="w-6 h-6 text-[#0FA958]" />
               </div>
-              <h4 className="text-sm font-bold text-white">Queue is all clear!</h4>
-              <p className="text-xs text-neutral-400">No pending turf listings waiting for admin review.</p>
+              <h4 className="text-sm font-bold text-[#0F172A]">Queue is all clear!</h4>
+              <p className="text-xs text-[#64748B]">No pending turf listings waiting for admin review.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4">
               {pendingTurfs.map((turf) => (
                 <div
                   key={turf.id}
-                  className="bg-neutral-900 border-2 border-amber-500/30 rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-5"
+                  className="bg-white border-2 border-amber-200 rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-5 shadow-card"
                 >
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
-                      <span className="bg-amber-500/20 text-amber-300 text-[10px] font-bold uppercase px-2 py-0.5 rounded border border-amber-500/40">
+                      <span className="bg-amber-50 text-amber-800 text-[10px] font-bold uppercase px-2 py-0.5 rounded border border-amber-200">
                         Pending Verification
                       </span>
-                      <h4 className="text-lg font-bold text-white">{turf.name}</h4>
+                      <h4 className="text-lg font-bold text-[#0F172A]">{turf.name}</h4>
                     </div>
 
-                    <p className="text-xs text-neutral-300 max-w-xl">{turf.description}</p>
+                    <p className="text-xs text-slate-600 max-w-xl">{turf.description}</p>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs bg-neutral-850 p-2.5 rounded-xl border border-neutral-800">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-200">
                       <div>
-                        <span className="text-neutral-500 block text-[10px]">Location:</span>
-                        <span className="text-white font-semibold">{turf.area}, {turf.city}</span>
+                        <span className="text-slate-500 block text-[10px]">Location:</span>
+                        <span className="text-[#0F172A] font-semibold">{turf.area}, {turf.city}</span>
                       </div>
                       <div>
-                        <span className="text-neutral-500 block text-[10px]">Hourly Rate:</span>
-                        <span className="font-mono text-emerald-400 font-bold">৳{turf.hourlyRate}/hr</span>
+                        <span className="text-slate-500 block text-[10px]">Hourly Rate:</span>
+                        <span className="font-mono text-[#064E3B] font-bold">BDT {turf.hourlyRate}/hr</span>
                       </div>
                       <div>
-                        <span className="text-neutral-500 block text-[10px]">Owner:</span>
-                        <span className="text-white font-semibold">{turf.ownerName}</span>
+                        <span className="text-slate-500 block text-[10px]">Owner:</span>
+                        <span className="text-[#0F172A] font-semibold">{turf.ownerName}</span>
                       </div>
                       <div>
-                        <span className="text-neutral-500 block text-[10px]">Owner Phone:</span>
-                        <span className="text-white font-semibold">{turf.ownerPhone}</span>
+                        <span className="text-slate-500 block text-[10px]">Owner Phone:</span>
+                        <span className="text-[#0F172A] font-semibold">{turf.ownerPhone}</span>
                       </div>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 pt-1">
-                      <span className="bg-neutral-800 px-2 py-0.5 rounded text-[10px] text-neutral-300 font-medium">
+                      <span className="bg-slate-100 px-2 py-0.5 rounded text-[10px] text-slate-700 font-medium border border-slate-200">
                         Pitch: {turf.size}
                       </span>
-                      <span className="bg-neutral-800 px-2 py-0.5 rounded text-[10px] text-neutral-300 font-medium">
+                      <span className="bg-slate-100 px-2 py-0.5 rounded text-[10px] text-slate-700 font-medium border border-slate-200">
                         Surface: {turf.surface}
                       </span>
                       <div className="flex items-center gap-1">
                         {turf.sports?.map((s) => (
-                          <span key={s} className="bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded text-[10px] uppercase font-bold border border-emerald-500/20">
+                          <span key={s} className="bg-emerald-50 text-[#064E3B] px-2 py-0.5 rounded text-[10px] uppercase font-bold border border-emerald-200">
                             {s}
                           </span>
                         ))}
@@ -287,20 +428,20 @@ export const AdminPanel: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0 pt-3 md:pt-0 border-t md:border-t-0 border-neutral-800">
+                  <div className="flex items-center gap-2 shrink-0 pt-3 md:pt-0 border-t md:border-t-0 border-slate-200">
                     <button
-                      onClick={() => handleReject(turf.id)}
-                      className="px-4 py-2.5 bg-neutral-800 hover:bg-neutral-750 text-red-400 hover:text-red-300 font-bold text-xs rounded-xl border border-neutral-700 transition-colors flex items-center gap-1.5 cursor-pointer"
+                      onClick={() => handleOpenRejectModal(turf)}
+                      className="px-4 py-2.5 bg-slate-100 hover:bg-red-50 text-red-600 hover:text-red-700 font-bold text-xs rounded-xl border border-slate-200 transition-colors flex items-center gap-1.5 cursor-pointer"
                     >
                       <XCircle className="w-4 h-4" />
                       <span>Reject</span>
                     </button>
                     <button
                       onClick={() => handleApprove(turf.id)}
-                      className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold text-xs rounded-xl transition-colors flex items-center gap-1.5 shadow-lg shadow-emerald-500/20 cursor-pointer"
+                      className="px-5 py-2.5 bg-[#0FA958] hover:bg-[#0D944D] text-white font-bold text-xs rounded-xl transition-colors flex items-center gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer"
                     >
                       <CheckCircle2 className="w-4 h-4" />
-                      <span>Approve & Publish Live</span>
+                      <span>Approve &amp; Publish Live</span>
                     </button>
                   </div>
                 </div>
@@ -314,16 +455,16 @@ export const AdminPanel: React.FC = () => {
       {activeTab === 'all-turfs' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-base font-bold text-white">All Platform Turfs</h3>
-            <span className="text-xs text-neutral-400">{turfs.length} total arenas</span>
+            <h3 className="text-base font-bold text-[#0F172A]">All Platform Turfs</h3>
+            <span className="text-xs text-[#64748B]">{turfs.length} total arenas</span>
           </div>
 
-          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-x-auto">
+          <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto shadow-card">
             <table className="w-full text-left text-xs">
               <thead>
-                <tr className="border-b border-neutral-800 text-neutral-400 bg-neutral-850/50">
+                <tr className="border-b border-slate-200 text-[#64748B] bg-slate-50">
                   <th className="p-3.5 font-semibold">Arena Name</th>
-                  <th className="p-3.5 font-semibold">City & Area</th>
+                  <th className="p-3.5 font-semibold">City &amp; Area</th>
                   <th className="p-3.5 font-semibold">Rate</th>
                   <th className="p-3.5 font-semibold">Owner Contact</th>
                   <th className="p-3.5 font-semibold">Status</th>
@@ -331,23 +472,23 @@ export const AdminPanel: React.FC = () => {
                   <th className="p-3.5 font-semibold">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-neutral-800">
+              <tbody className="divide-y divide-slate-100">
                 {turfs.map((t) => (
-                  <tr key={t.id} className="hover:bg-neutral-850/40">
-                    <td className="p-3.5 font-bold text-white">
+                  <tr key={t.id} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="p-3.5 font-bold text-[#0F172A]">
                       <div>{t.name}</div>
-                      <div className="text-[10px] text-neutral-500 font-normal">{t.size}</div>
+                      <div className="text-[10px] text-slate-500 font-normal">{t.size}</div>
                     </td>
-                    <td className="p-3.5 text-neutral-300">{t.area}, {t.city}</td>
-                    <td className="p-3.5 font-mono text-emerald-400 font-bold">৳{t.hourlyRate}/hr</td>
-                    <td className="p-3.5 text-neutral-300">
+                    <td className="p-3.5 text-slate-700">{t.area}, {t.city}</td>
+                    <td className="p-3.5 font-mono text-[#064E3B] font-bold">BDT {t.hourlyRate}/hr</td>
+                    <td className="p-3.5 text-slate-700">
                       <div>{t.ownerName}</div>
-                      <div className="text-[10px] text-neutral-500">{t.ownerPhone}</div>
+                      <div className="text-[10px] text-slate-500">{t.ownerPhone}</div>
                     </td>
                     <td className="p-3.5">
                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                        t.status === 'approved' ? 'bg-emerald-500/20 text-emerald-400' :
-                        t.status === 'pending' ? 'bg-amber-500/20 text-amber-400' : 'bg-red-500/20 text-red-400'
+                        t.status === 'approved' ? 'bg-emerald-50 text-[#064E3B] border border-emerald-200' :
+                        t.status === 'pending' ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-red-50 text-red-700 border border-red-200'
                       }`}>
                         {t.status}
                       </span>
@@ -355,10 +496,10 @@ export const AdminPanel: React.FC = () => {
                     <td className="p-3.5">
                       <button
                         onClick={() => handleToggleFeature(t)}
-                        className={`px-2 py-1 rounded text-[10px] font-bold transition-colors ${
+                        className={`px-2.5 py-1 rounded text-[10px] font-bold transition-colors cursor-pointer ${
                           t.isFeatured
-                            ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
-                            : 'bg-neutral-800 text-neutral-500 hover:text-white'
+                            ? 'bg-amber-50 text-amber-800 border border-amber-300'
+                            : 'bg-slate-100 text-slate-500 hover:text-slate-800 border border-slate-200'
                         }`}
                       >
                         {t.isFeatured ? '★ Featured' : '+ Feature'}
@@ -368,16 +509,16 @@ export const AdminPanel: React.FC = () => {
                       {t.status !== 'approved' ? (
                         <button
                           onClick={() => handleApprove(t.id)}
-                          className="px-2.5 py-1 bg-emerald-500/20 hover:bg-emerald-500 text-emerald-400 hover:text-neutral-950 rounded-lg font-bold text-[10px] transition-colors"
+                          className="px-2.5 py-1 bg-[#0FA958] hover:bg-[#0D944D] text-white rounded-lg font-bold text-[10px] transition-colors cursor-pointer shadow-soft"
                         >
                           Approve
                         </button>
                       ) : (
                         <button
-                          onClick={() => handleReject(t.id)}
-                          className="px-2.5 py-1 bg-neutral-800 hover:bg-red-950 text-neutral-400 hover:text-red-400 rounded-lg text-[10px] transition-colors"
+                          onClick={() => handleOpenSuspendModal(t)}
+                          className="px-2.5 py-1 bg-slate-100 hover:bg-red-50 text-slate-600 hover:text-red-600 rounded-lg text-[10px] transition-colors cursor-pointer border border-slate-200"
                         >
-                          Deactivate
+                          Suspend
                         </button>
                       )}
                     </td>
@@ -393,48 +534,48 @@ export const AdminPanel: React.FC = () => {
       {activeTab === 'bookings' && (
         <div className="space-y-5" id="admin-bookings-section">
           {/* Header */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-5 rounded-2xl border border-slate-200 shadow-card">
             <div>
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <ShieldCheck className="w-5 h-5 text-purple-400" />
-                <span>Global Match Bookings & Financial Audit</span>
+              <h3 className="text-base font-bold text-[#0F172A] flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-[#0FA958]" />
+                <span>Global Match Bookings &amp; Financial Audit</span>
               </h3>
-              <p className="text-xs text-neutral-400 mt-0.5">
+              <p className="text-xs text-[#64748B] mt-0.5">
                 Monitor all turf bookings across Bangladesh with real-time filters by Date, Arena, Status, and Payment condition.
               </p>
             </div>
 
             <button
               onClick={() => refreshBookings()}
-              className="px-3 py-1.5 bg-neutral-900 border border-neutral-800 hover:bg-neutral-850 text-neutral-300 text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer self-start sm:self-auto"
+              className="px-3 py-1.5 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer self-start sm:self-auto shadow-2xs"
             >
-              <RefreshCw className="w-3.5 h-3.5 text-purple-400" />
+              <RefreshCw className="w-3.5 h-3.5 text-[#0FA958]" />
               <span>Refresh Records</span>
             </button>
           </div>
 
           {/* FILTER BAR: Date, Turf, Status, Payment Status & Search */}
-          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4 sm:p-5 space-y-3">
-            <div className="flex items-center gap-2 text-xs font-bold text-neutral-300">
-              <Filter className="w-4 h-4 text-purple-400" />
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 space-y-3 shadow-card">
+            <div className="flex items-center gap-2 text-xs font-bold text-[#0F172A]">
+              <Filter className="w-4 h-4 text-[#0FA958]" />
               <span>Filter Bookings:</span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
               {/* Date Filter */}
               <div>
-                <label className="block text-[11px] font-semibold text-neutral-400 mb-1">Match Date</label>
+                <label className="block text-[11px] font-semibold text-[#64748B] mb-1">Match Date</label>
                 <div className="relative">
                   <input
                     type="date"
                     value={bookingDateFilter}
                     onChange={(e) => setBookingDateFilter(e.target.value)}
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-2.5 py-1.5 text-xs text-white"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-[#0F172A]"
                   />
                   {bookingDateFilter && (
                     <button
                       onClick={() => setBookingDateFilter('')}
-                      className="absolute right-2 top-1.5 text-[10px] text-neutral-400 hover:text-white"
+                      className="absolute right-2 top-1.5 text-[10px] text-slate-400 hover:text-slate-700"
                     >
                       Clear
                     </button>
@@ -444,11 +585,11 @@ export const AdminPanel: React.FC = () => {
 
               {/* Turf Filter */}
               <div>
-                <label className="block text-[11px] font-semibold text-neutral-400 mb-1">Turf Arena</label>
+                <label className="block text-[11px] font-semibold text-[#64748B] mb-1">Turf Arena</label>
                 <select
                   value={bookingTurfFilter}
                   onChange={(e) => setBookingTurfFilter(e.target.value)}
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-2.5 py-1.5 text-xs text-white"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-[#0F172A]"
                 >
                   <option value="all">All Arenas ({turfs.length})</option>
                   {turfs.map((t) => (
@@ -461,11 +602,11 @@ export const AdminPanel: React.FC = () => {
 
               {/* Status Filter */}
               <div>
-                <label className="block text-[11px] font-semibold text-neutral-400 mb-1">Booking Status</label>
+                <label className="block text-[11px] font-semibold text-[#64748B] mb-1">Booking Status</label>
                 <select
                   value={bookingStatusFilter}
                   onChange={(e) => setBookingStatusFilter(e.target.value)}
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-2.5 py-1.5 text-xs text-white"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-[#0F172A]"
                 >
                   <option value="all">All Statuses</option>
                   <option value="confirmed">Confirmed</option>
@@ -478,16 +619,16 @@ export const AdminPanel: React.FC = () => {
 
               {/* Payment Status Filter */}
               <div>
-                <label className="block text-[11px] font-semibold text-neutral-400 mb-1">Payment Status</label>
+                <label className="block text-[11px] font-semibold text-[#64748B] mb-1">Payment Status</label>
                 <select
                   value={bookingPaymentFilter}
                   onChange={(e) => setBookingPaymentFilter(e.target.value)}
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-xl px-2.5 py-1.5 text-xs text-white"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-[#0F172A]"
                 >
                   <option value="all">All Payment States</option>
                   <option value="fully_paid">Fully Paid (100%)</option>
                   <option value="advance_paid">Partially Paid (Advance)</option>
-                  <option value="due_pending">Due at Pitch (&gt; ৳0)</option>
+                  <option value="due_pending">Due at Pitch (&gt; BDT 0)</option>
                   <option value="refunded">Refund Processed</option>
                   <option value="refund_pending">Refund In Review</option>
                 </select>
@@ -495,15 +636,15 @@ export const AdminPanel: React.FC = () => {
 
               {/* Keyword Search */}
               <div>
-                <label className="block text-[11px] font-semibold text-neutral-400 mb-1">Search Keywords</label>
+                <label className="block text-[11px] font-semibold text-[#64748B] mb-1">Search Keywords</label>
                 <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-neutral-500 absolute left-2.5 top-2.5" />
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
                   <input
                     type="text"
                     value={bookingSearchQuery}
                     onChange={(e) => setBookingSearchQuery(e.target.value)}
                     placeholder="Pass #, name, phone, trx..."
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-xl pl-8 pr-2.5 py-1.5 text-xs text-white"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-2.5 py-1.5 text-xs text-[#0F172A]"
                   />
                 </div>
               </div>
@@ -554,86 +695,86 @@ export const AdminPanel: React.FC = () => {
               <>
                 {/* Micro KPI Strip */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-3">
-                    <div className="text-[10px] uppercase font-bold text-neutral-400">Matches Found</div>
-                    <div className="text-lg font-black text-white">{filteredBookings.length}</div>
+                  <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-card">
+                    <div className="text-[10px] uppercase font-bold text-slate-500">Matches Found</div>
+                    <div className="text-lg font-black text-[#0F172A]">{filteredBookings.length}</div>
                   </div>
-                  <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-3">
-                    <div className="text-[10px] uppercase font-bold text-neutral-400">Total Booking Value</div>
-                    <div className="text-lg font-black text-emerald-400 font-mono">৳{filteredGross.toLocaleString()}</div>
+                  <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-card">
+                    <div className="text-[10px] uppercase font-bold text-slate-500">Total Booking Value</div>
+                    <div className="text-lg font-black text-[#064E3B] font-mono">BDT {filteredGross.toLocaleString()}</div>
                   </div>
-                  <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-3">
-                    <div className="text-[10px] uppercase font-bold text-neutral-400">Advance Paid</div>
-                    <div className="text-lg font-black text-emerald-300 font-mono">৳{filteredAdvance.toLocaleString()}</div>
+                  <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-card">
+                    <div className="text-[10px] uppercase font-bold text-slate-500">Advance Paid</div>
+                    <div className="text-lg font-black text-[#0FA958] font-mono">BDT {filteredAdvance.toLocaleString()}</div>
                   </div>
-                  <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-3">
-                    <div className="text-[10px] uppercase font-bold text-neutral-400">Pending Ground Due</div>
-                    <div className="text-lg font-black text-amber-400 font-mono">৳{filteredDue.toLocaleString()}</div>
+                  <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-card">
+                    <div className="text-[10px] uppercase font-bold text-slate-500">Pending Ground Due</div>
+                    <div className="text-lg font-black text-amber-600 font-mono">BDT {filteredDue.toLocaleString()}</div>
                   </div>
                 </div>
 
                 {/* Table */}
-                <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-x-auto shadow-sm">
+                <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto shadow-card">
                   <table className="w-full text-left text-xs">
                     <thead>
-                      <tr className="border-b border-neutral-800 text-neutral-400 bg-neutral-850/50">
+                      <tr className="border-b border-slate-200 text-[#64748B] bg-slate-50">
                         <th className="p-3.5 font-semibold">Pass ID</th>
                         <th className="p-3.5 font-semibold">Arena / Venue</th>
                         <th className="p-3.5 font-semibold">Booker</th>
                         <th className="p-3.5 font-semibold">Match Schedule</th>
                         <th className="p-3.5 font-semibold">Fee / Advance / Due</th>
-                        <th className="p-3.5 font-semibold">MFS & Trx ID</th>
+                        <th className="p-3.5 font-semibold">MFS &amp; Trx ID</th>
                         <th className="p-3.5 font-semibold">Status</th>
                         <th className="p-3.5 font-semibold">Audit Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-neutral-800">
+                    <tbody className="divide-y divide-slate-100">
                       {filteredBookings.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="p-8 text-center text-neutral-500">
+                          <td colSpan={8} className="p-8 text-center text-slate-400">
                             No match bookings match your current filter parameters.
                           </td>
                         </tr>
                       ) : (
                         filteredBookings.map((b) => (
-                          <tr key={b.id} className="hover:bg-neutral-850/40 transition-colors">
-                            <td className="p-3.5 font-mono font-bold text-emerald-400 whitespace-nowrap">
+                          <tr key={b.id} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="p-3.5 font-mono font-bold text-[#064E3B] whitespace-nowrap">
                               #{b.bookingCode}
                             </td>
-                            <td className="p-3.5 font-semibold text-white">
+                            <td className="p-3.5 font-semibold text-[#0F172A]">
                               <div>{b.turfName}</div>
-                              <div className="text-[10px] text-neutral-400 font-normal">
+                              <div className="text-[10px] text-slate-500 font-normal">
                                 {b.turfArea}, {b.turfCity}
                               </div>
                             </td>
-                            <td className="p-3.5 text-neutral-300">
-                              <div className="font-semibold text-white">{b.userName}</div>
-                              <div className="text-[10px] text-neutral-400">{b.userPhone}</div>
+                            <td className="p-3.5 text-slate-700">
+                              <div className="font-semibold text-[#0F172A]">{b.userName}</div>
+                              <div className="text-[10px] text-slate-500">{b.userPhone}</div>
                             </td>
-                            <td className="p-3.5 text-neutral-300 whitespace-nowrap">
+                            <td className="p-3.5 text-slate-700 whitespace-nowrap">
                               <div className="font-semibold">{b.date}</div>
-                              <div className="text-[10px] font-mono text-emerald-400">
+                              <div className="text-[10px] font-mono text-[#064E3B]">
                                 {b.startTime} - {b.endTime} ({b.durationHours}h)
                               </div>
                             </td>
                             <td className="p-3.5 whitespace-nowrap">
-                              <div className="font-mono text-white font-semibold">৳{b.totalAmount}</div>
-                              <div className="text-[10px] text-emerald-400">Paid: ৳{b.advancePaid}</div>
+                              <div className="font-mono text-[#0F172A] font-semibold">BDT {b.totalAmount}</div>
+                              <div className="text-[10px] text-[#0FA958]">Paid: BDT {b.advancePaid}</div>
                               {b.dueAmount > 0 ? (
-                                <div className="text-[10px] text-amber-400 font-semibold">Due: ৳{b.dueAmount}</div>
+                                <div className="text-[10px] text-amber-600 font-semibold">Due: BDT {b.dueAmount}</div>
                               ) : (
-                                <div className="text-[10px] text-neutral-500">Fully Paid</div>
+                                <div className="text-[10px] text-slate-400">Fully Paid</div>
                               )}
                             </td>
-                            <td className="p-3.5 text-neutral-300 whitespace-nowrap">
+                            <td className="p-3.5 text-slate-700 whitespace-nowrap">
                               <div className="uppercase font-bold text-xs">{b.paymentMethod}</div>
-                              <div className="text-[10px] font-mono text-neutral-400">
+                              <div className="text-[10px] font-mono text-slate-500">
                                 {b.transactionId || 'CASH AT DESK'}
                               </div>
                               {b.refundStatus && (
                                 <div
                                   className={`text-[9px] font-bold uppercase mt-0.5 ${
-                                    b.refundStatus === 'refunded' ? 'text-emerald-400' : 'text-amber-400'
+                                    b.refundStatus === 'refunded' ? 'text-[#0FA958]' : 'text-amber-600'
                                   }`}
                                 >
                                   Refund: {b.refundStatus}
@@ -644,14 +785,14 @@ export const AdminPanel: React.FC = () => {
                               <span
                                 className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
                                   b.status === 'confirmed'
-                                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                    ? 'bg-emerald-50 text-[#064E3B] border border-emerald-200'
                                     : b.status === 'pending_approval'
-                                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                    ? 'bg-amber-50 text-amber-800 border border-amber-200'
                                     : b.status === 'cancellation_requested'
-                                    ? 'bg-red-500/25 text-red-300 border border-red-500/40 animate-pulse'
+                                    ? 'bg-red-50 text-red-700 border border-red-200 animate-pulse'
                                     : b.status === 'completed'
-                                    ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                                    : 'bg-neutral-800 text-neutral-400'
+                                    ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                    : 'bg-slate-100 text-slate-600'
                                 }`}
                               >
                                 {b.status === 'cancellation_requested' ? 'Cancel Requested' : b.status.replace('_', ' ')}
@@ -661,17 +802,17 @@ export const AdminPanel: React.FC = () => {
                               <div className="flex items-center gap-1.5">
                                 <button
                                   onClick={() => setSelectedBookingForDetails(b)}
-                                  className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 rounded-lg text-[10px] font-bold flex items-center gap-1 border border-neutral-700 transition-colors cursor-pointer"
+                                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] font-bold flex items-center gap-1 border border-slate-200 transition-colors cursor-pointer"
                                   title="View Digital Pass & Full Breakdown"
                                 >
-                                  <FileText className="w-3 h-3 text-purple-400" />
+                                  <FileText className="w-3 h-3 text-[#0FA958]" />
                                   <span>Details</span>
                                 </button>
 
                                 {b.status === 'cancellation_requested' && (
                                   <button
                                     onClick={() => {
-                                      if (confirm(`Approve cancellation and refund ৳${b.advancePaid} to ${b.userName}?`)) {
+                                      if (confirm(`Approve cancellation and refund BDT ${b.advancePaid} to ${b.userName}?`)) {
                                         updateBookingStatus(b.id, 'cancelled', {
                                           refundStatus: 'refunded',
                                           refundAmount: b.advancePaid,
@@ -679,7 +820,7 @@ export const AdminPanel: React.FC = () => {
                                         });
                                       }
                                     }}
-                                    className="px-2 py-1 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
+                                    className="px-2 py-1 bg-[#0FA958] hover:bg-[#0D944D] text-white rounded-lg text-[10px] font-bold transition-colors cursor-pointer shadow-2xs"
                                   >
                                     Refund
                                   </button>
@@ -687,7 +828,7 @@ export const AdminPanel: React.FC = () => {
 
                                 <a
                                   href={`tel:${b.userPhone}`}
-                                  className="p-1 text-neutral-400 hover:text-emerald-400 hover:bg-neutral-800 rounded transition-colors"
+                                  className="p-1 text-slate-400 hover:text-[#0FA958] hover:bg-slate-100 rounded transition-colors"
                                   title="Call user"
                                 >
                                   <Phone className="w-3.5 h-3.5" />
@@ -710,63 +851,67 @@ export const AdminPanel: React.FC = () => {
       {activeTab === 'users' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-base font-bold text-white">Registered Users & Permission Roles</h3>
-            <span className="text-xs text-neutral-400">{users.length} registered accounts</span>
+            <h3 className="text-base font-bold text-[#0F172A]">Registered Users &amp; Permission Roles</h3>
+            <span className="text-xs text-[#64748B]">{users.length} registered accounts</span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {users.map((u) => (
-              <div key={u.id} className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5 space-y-3">
+              <div key={u.id} className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3 shadow-card">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-neutral-800 overflow-hidden flex items-center justify-center font-bold text-sm text-white">
+                  <div className="w-10 h-10 rounded-full bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center font-bold text-sm text-[#064E3B]">
                     {u.avatar ? <img src={u.avatar} alt={u.name} className="w-full h-full object-cover" /> : u.name[0]}
                   </div>
                   <div>
-                    <h4 className="text-sm font-bold text-white">{u.name}</h4>
-                    <p className="text-xs text-neutral-400">{u.email}</p>
+                    <h4 className="text-sm font-bold text-[#0F172A]">{u.name}</h4>
+                    <p className="text-xs text-[#64748B]">{u.email}</p>
                   </div>
                 </div>
 
-                <div className="text-xs text-neutral-400 pt-1">
-                  <div>Phone: <strong className="text-neutral-200">{u.phone}</strong></div>
+                <div className="text-xs text-slate-500 pt-1">
+                  <div>Phone: <strong className="text-slate-800">{u.phone}</strong></div>
                   <div>Member Since: {u.createdAt}</div>
                 </div>
 
-                <div className="pt-3 border-t border-neutral-800 flex flex-col gap-2">
+                <div className="pt-3 border-t border-slate-100 flex flex-col gap-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-neutral-400">Database Role:</span>
-                    <select
-                      value={u.role}
-                      onChange={async (e) => {
-                        const newRole = e.target.value as UserRole;
-                        try {
-                          await updateUserRole(u.id, newRole);
-                        } catch (err) {
-                          console.error('Failed to change role:', err);
-                        }
-                      }}
-                      className="bg-neutral-800 border border-neutral-700 text-xs font-bold rounded-lg px-2 py-1 text-white focus:outline-none focus:border-emerald-500"
-                    >
-                      <option value="customer">Customer</option>
-                      <option value="owner">Owner</option>
-                      <option value="admin">Admin</option>
-                    </select>
+                    <span className="text-xs text-slate-500">Database Role:</span>
+                    {currentUser?.id === u.id ? (
+                      <span className="text-xs font-bold text-slate-400 italic">Current User</span>
+                    ) : (
+                      <select
+                        value={u.role}
+                        onChange={async (e) => {
+                          const newRole = e.target.value as UserRole;
+                          try {
+                            await updateUserRole(u.id, newRole);
+                          } catch (err: any) {
+                            alert(err?.message || 'Failed to change role');
+                            console.error('Failed to change role:', err);
+                          }
+                        }}
+                        className="bg-slate-50 border border-slate-200 text-xs font-bold rounded-lg px-2 py-1 text-[#0F172A] focus:outline-none focus:border-[#0FA958]"
+                      >
+                        <option value="customer">Customer</option>
+                        <option value="owner">Turf Owner</option>
+                        {currentUser?.isSuperAdmin && (
+                          <option value="admin">Platform Admin</option>
+                        )}
+                      </select>
+                    )}
                   </div>
 
                   <div className="flex items-center justify-between pt-1">
                     <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
-                      u.role === 'admin' ? 'bg-purple-500/20 text-purple-400' :
-                      u.role === 'owner' ? 'bg-amber-500/20 text-amber-400' : 'bg-emerald-500/20 text-emerald-400'
+                      u.role === 'admin' ? 'bg-purple-50 text-purple-700 border border-purple-200' :
+                      u.role === 'owner' ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-emerald-50 text-[#064E3B] border border-emerald-200'
                     }`}>
                       {u.role}
                     </span>
 
-                    <button
-                      onClick={() => switchRole(u.role)}
-                      className="text-xs text-emerald-400 hover:text-emerald-300 font-semibold"
-                    >
-                      Impersonate Persona →
-                    </button>
+                    <span className="text-[11px] text-[#64748B] font-mono">
+                      ID: #{u.id}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -780,61 +925,61 @@ export const AdminPanel: React.FC = () => {
         <div className="space-y-6">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-base font-bold text-white">System Reports & Financial Ledger</h3>
-              <p className="text-xs text-neutral-400">Database verified audit metrics protected by requireAdmin() middleware</p>
+              <h3 className="text-base font-bold text-[#0F172A]">System Reports &amp; Financial Ledger</h3>
+              <p className="text-xs text-[#64748B]">Database verified audit metrics protected by requireAdmin() middleware</p>
             </div>
-            {loadingReport && <span className="text-xs text-purple-400 animate-pulse">Refreshing ledger...</span>}
+            {loadingReport && <span className="text-xs text-[#0FA958] animate-pulse">Refreshing ledger...</span>}
           </div>
 
           {reportData ? (
             <div className="space-y-6">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
-                  <div className="text-xs font-bold text-neutral-400 uppercase mb-1">Total Revenue Collected</div>
-                  <div className="text-2xl font-black text-emerald-400 font-mono">
-                    ৳{reportData.summary.totalRevenue.toLocaleString()}
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-card">
+                  <div className="text-xs font-bold text-slate-500 uppercase mb-1">Total Revenue Collected</div>
+                  <div className="text-2xl font-black text-[#064E3B] font-mono">
+                    BDT {reportData.summary.totalRevenue.toLocaleString()}
                   </div>
-                  <div className="text-[10px] text-neutral-500 mt-1">Due balance: ৳{reportData.summary.totalDue.toLocaleString()}</div>
+                  <div className="text-[10px] text-slate-500 mt-1">Due balance: BDT {reportData.summary.totalDue.toLocaleString()}</div>
                 </div>
 
-                <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
-                  <div className="text-xs font-bold text-neutral-400 uppercase mb-1">Booking Conversion</div>
-                  <div className="text-2xl font-black text-white font-mono">
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-card">
+                  <div className="text-xs font-bold text-slate-500 uppercase mb-1">Booking Conversion</div>
+                  <div className="text-2xl font-black text-[#0F172A] font-mono">
                     {reportData.bookingsByStatus.confirmed} Confirmed
                   </div>
-                  <div className="text-[10px] text-amber-400 mt-1">{reportData.bookingsByStatus.pending_approval} pending approval</div>
+                  <div className="text-[10px] text-amber-600 mt-1">{reportData.bookingsByStatus.pending_approval} pending approval</div>
                 </div>
 
-                <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
-                  <div className="text-xs font-bold text-neutral-400 uppercase mb-1">Venues In Network</div>
-                  <div className="text-2xl font-black text-purple-400 font-mono">
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-card">
+                  <div className="text-xs font-bold text-slate-500 uppercase mb-1">Venues In Network</div>
+                  <div className="text-2xl font-black text-[#0FA958] font-mono">
                     {reportData.turfsByStatus.approved} Approved
                   </div>
-                  <div className="text-[10px] text-amber-400 mt-1">{reportData.turfsByStatus.pending} pending verification</div>
+                  <div className="text-[10px] text-amber-600 mt-1">{reportData.turfsByStatus.pending} pending verification</div>
                 </div>
               </div>
 
               {/* User Roles Breakdown */}
-              <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
-                <h4 className="text-sm font-bold text-white mb-3">User Accounts by Role</h4>
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-card">
+                <h4 className="text-sm font-bold text-[#0F172A] mb-3">User Accounts by Role</h4>
                 <div className="grid grid-cols-3 gap-3">
-                  <div className="bg-neutral-950/60 p-3 rounded-xl border border-neutral-800 text-center">
-                    <div className="text-xl font-bold text-emerald-400">{reportData.usersByRole.customer}</div>
-                    <div className="text-xs text-neutral-400 mt-0.5">Customers</div>
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-center">
+                    <div className="text-xl font-bold text-[#064E3B]">{reportData.usersByRole.customer}</div>
+                    <div className="text-xs text-slate-500 mt-0.5">Customers</div>
                   </div>
-                  <div className="bg-neutral-950/60 p-3 rounded-xl border border-neutral-800 text-center">
-                    <div className="text-xl font-bold text-amber-400">{reportData.usersByRole.owner}</div>
-                    <div className="text-xs text-neutral-400 mt-0.5">Turf Owners</div>
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-center">
+                    <div className="text-xl font-bold text-amber-600">{reportData.usersByRole.owner}</div>
+                    <div className="text-xs text-slate-500 mt-0.5">Turf Owners</div>
                   </div>
-                  <div className="bg-neutral-950/60 p-3 rounded-xl border border-neutral-800 text-center">
-                    <div className="text-xl font-bold text-purple-400">{reportData.usersByRole.admin}</div>
-                    <div className="text-xs text-neutral-400 mt-0.5">Platform Admins</div>
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-center">
+                    <div className="text-xl font-bold text-[#0FA958]">{reportData.usersByRole.admin}</div>
+                    <div className="text-xs text-slate-500 mt-0.5">Platform Admins</div>
                   </div>
                 </div>
               </div>
             </div>
           ) : (
-            <div className="p-8 text-center text-neutral-500 bg-neutral-900 rounded-2xl border border-neutral-800">
+            <div className="p-8 text-center text-slate-500 bg-white rounded-2xl border border-slate-200 shadow-card">
               Loading platform reports...
             </div>
           )}
@@ -849,6 +994,98 @@ export const AdminPanel: React.FC = () => {
           onClose={() => setSelectedBookingForDetails(null)}
           canManage={true}
         />
+      )}
+
+      {/* Turf Moderation & Reason Modal */}
+      {moderationModalTurf && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                {moderationModalAction === 'reject' ? (
+                  <>
+                    <XCircle className="w-5 h-5 text-rose-600" />
+                    <span>Reject Turf Listing</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle className="w-5 h-5 text-amber-600" />
+                    <span>Suspend Turf Listing</span>
+                  </>
+                )}
+              </h3>
+              <button
+                onClick={() => setModerationModalTurf(null)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="bg-slate-50 p-3.5 rounded-2xl text-xs space-y-1.5 border border-slate-200">
+              <div className="flex justify-between text-slate-600">
+                <span>Venue Name:</span>
+                <span className="font-bold text-slate-900">{moderationModalTurf.name}</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Location:</span>
+                <span className="font-bold text-slate-900">{moderationModalTurf.area}, {moderationModalTurf.city}</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Owner:</span>
+                <span className="font-bold text-slate-900">{moderationModalTurf.ownerName}</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Owner Phone:</span>
+                <span className="font-mono text-slate-800">{moderationModalTurf.ownerPhone}</span>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                {moderationModalAction === 'reject'
+                  ? 'Rejection Reason (Mandatory):'
+                  : 'Suspension Reason (Mandatory):'}
+              </label>
+              <textarea
+                value={moderationReason}
+                onChange={(e) => setModerationReason(e.target.value)}
+                placeholder={
+                  moderationModalAction === 'reject'
+                    ? 'State specific grounds (e.g., fraudulent paperwork, fake turf photos, pricing violation)...'
+                    : 'State why this active turf is suspended (e.g., persistent customer complaints, maintenance inspection)...'
+                }
+                rows={3}
+                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-[#0FA958]"
+              />
+            </div>
+
+            {moderationError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs">
+                {moderationError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => setModerationModalTurf(null)}
+                className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmModeration}
+                className={`px-5 py-2 text-white text-xs font-bold rounded-xl transition-all shadow-md cursor-pointer ${
+                  moderationModalAction === 'reject'
+                    ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-600/20'
+                    : 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/20'
+                }`}
+              >
+                {moderationModalAction === 'reject' ? 'Confirm Rejection' : 'Confirm Suspension'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -43,11 +43,18 @@ export class SSLCommerzGatewayService {
 
   constructor() {
     this.isSandbox = process.env.SSLCOMMERZ_SANDBOX !== 'false';
-    this.storeId = process.env.SSLCOMMERZ_STORE_ID || 'turfbd_sandbox_store';
-    this.storePass = process.env.SSLCOMMERZ_STORE_PASS || 'turfbd_sandbox_pass';
+    this.storeId = process.env.SSLCOMMERZ_STORE_ID || '';
+    this.storePass = process.env.SSLCOMMERZ_STORE_PASS || '';
     this.baseUrl = this.isSandbox
       ? 'https://sandbox.sslcommerz.com'
       : 'https://securepay.sslcommerz.com';
+  }
+
+  /**
+   * Has real merchant credentials configured
+   */
+  hasCredentials(): boolean {
+    return Boolean(this.storeId && this.storePass);
   }
 
   /**
@@ -57,7 +64,7 @@ export class SSLCommerzGatewayService {
     const sessionkey = `SSL_SESS_${crypto.randomBytes(8).toString('hex')}`;
 
     try {
-      if (process.env.SSLCOMMERZ_STORE_ID && process.env.SSLCOMMERZ_STORE_PASS) {
+      if (this.hasCredentials()) {
         const postData = new URLSearchParams({
           store_id: this.storeId,
           store_passwd: this.storePass,
@@ -86,22 +93,26 @@ export class SSLCommerzGatewayService {
           body: postData.toString(),
         });
 
-        if (res.ok) {
-          const data = await res.json();
-          if (data.status === 'SUCCESS' && data.GatewayPageURL) {
-            return {
-              status: 'SUCCESS',
-              sessionkey: data.sessionkey || sessionkey,
-              gatewayPageURL: data.GatewayPageURL,
-              tranId: params.tranId,
-              amount: params.totalAmount,
-              gateway: 'sslcommerz',
-            };
+        const data = await res.json();
+        if (res.ok && data.status === 'SUCCESS' && data.GatewayPageURL) {
+          return {
+            status: 'SUCCESS',
+            sessionkey: data.sessionkey || sessionkey,
+            gatewayPageURL: data.GatewayPageURL,
+            tranId: params.tranId,
+            amount: params.totalAmount,
+            gateway: 'sslcommerz',
+          };
+        } else {
+          console.error('[SSLCommerz] Session creation failed:', data);
+          if (!this.isSandbox) {
+            throw new Error(data.failedreason || 'SSLCommerz session initialization failed');
           }
         }
       }
     } catch (err) {
-      console.warn('SSLCommerz initSession fallback to sandbox return URL:', err);
+      console.warn('[SSLCommerz] initSession error:', err);
+      if (!this.isSandbox) throw err;
     }
 
     // Sandbox gateway redirect URL pointing directly to simulator return
@@ -122,30 +133,34 @@ export class SSLCommerzGatewayService {
    */
   async validateTransaction(valId: string, tranId: string, expectedAmount?: number): Promise<SSLCommerzValidateResult> {
     try {
-      if (process.env.SSLCOMMERZ_STORE_ID && process.env.SSLCOMMERZ_STORE_PASS) {
-        const verifyUrl = `${this.baseUrl}/validator/api/validationserverAPI.php?val_id=${valId}&store_id=${this.storeId}&store_passwd=${this.storePass}&format=json`;
+      if (this.hasCredentials()) {
+        const verifyUrl = `${this.baseUrl}/validator/api/validationserverAPI.php?val_id=${encodeURIComponent(valId)}&store_id=${encodeURIComponent(this.storeId)}&store_passwd=${encodeURIComponent(this.storePass)}&format=json`;
         const res = await fetch(verifyUrl);
 
-        if (res.ok) {
-          const data = await res.json();
-          if (data.status === 'VALID' || data.status === 'VALIDATED') {
-            return {
-              status: 'Completed',
-              valId,
-              tranId: data.tran_id || tranId,
-              bankTranId: data.bank_tran_id || `SSL_BANK_${Date.now()}`,
-              amount: Number(data.amount),
-              cardType: data.card_type || 'VISA-SSL',
-              cardBrand: data.card_brand || 'SSLCommerz Gateway',
-              tranDate: data.tran_date || new Date().toISOString(),
-              currency: data.currency || 'BDT',
-              gateway: 'sslcommerz',
-            };
+        const data = await res.json();
+        if (res.ok && (data.status === 'VALID' || data.status === 'VALIDATED')) {
+          return {
+            status: 'Completed',
+            valId,
+            tranId: data.tran_id || tranId,
+            bankTranId: data.bank_tran_id || `SSL_BANK_${Date.now()}`,
+            amount: Number(data.amount),
+            cardType: data.card_type || 'VISA-SSL',
+            cardBrand: data.card_brand || 'SSLCommerz Gateway',
+            tranDate: data.tran_date || new Date().toISOString(),
+            currency: data.currency || 'BDT',
+            gateway: 'sslcommerz',
+          };
+        } else {
+          console.error('[SSLCommerz] Transaction validation failed:', data);
+          if (!this.isSandbox) {
+            throw new Error(data.error || 'SSLCommerz order validation failed');
           }
         }
       }
     } catch (err) {
-      console.warn('SSLCommerz validation fallback to sandbox confirmation:', err);
+      console.warn('[SSLCommerz] validation error:', err);
+      if (!this.isSandbox) throw err;
     }
 
     // Sandbox validation
@@ -164,11 +179,27 @@ export class SSLCommerzGatewayService {
   }
 
   /**
-   * Validate IPN callback
+   * Validate IPN callback payload
    */
-  verifyIPN(payload: any): boolean {
-    if (!payload || !payload.status) return false;
-    return payload.status === 'VALID' || payload.status === 'VALIDATED';
+  async verifyIPN(payload: any): Promise<{ valid: boolean; data?: SSLCommerzValidateResult }> {
+    if (!payload || !payload.val_id || !payload.tran_id) {
+      return { valid: false };
+    }
+
+    if (payload.status !== 'VALID' && payload.status !== 'VALIDATED') {
+      return { valid: false };
+    }
+
+    // Server-to-server confirmation with Order Validation API
+    try {
+      const validation = await this.validateTransaction(payload.val_id, payload.tran_id, Number(payload.amount));
+      return {
+        valid: validation.status === 'Completed',
+        data: validation,
+      };
+    } catch {
+      return { valid: false };
+    }
   }
 
   /**
@@ -180,6 +211,25 @@ export class SSLCommerzGatewayService {
     amount: number;
   }> {
     const refundRefId = `SSLR_${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+
+    try {
+      if (this.hasCredentials()) {
+        const refundUrl = `${this.baseUrl}/validator/api/merchantTransIDvalidationAPI.php?refund_amount=${params.amount}&bank_tran_id=${encodeURIComponent(params.bankTranId)}&refe_id=${encodeURIComponent(refundRefId)}&store_id=${encodeURIComponent(this.storeId)}&store_passwd=${encodeURIComponent(this.storePass)}&format=json`;
+        const res = await fetch(refundUrl);
+        const data = await res.json();
+        if (res.ok && (data.status === 'success' || data.refund_ref_id)) {
+          return {
+            refundRefId: data.refund_ref_id || refundRefId,
+            status: 'Completed',
+            amount: params.amount,
+          };
+        }
+      }
+    } catch (err) {
+      console.warn('[SSLCommerz] refund error:', err);
+      if (!this.isSandbox) throw err;
+    }
+
     return {
       refundRefId,
       status: 'Completed',

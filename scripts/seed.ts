@@ -25,9 +25,10 @@ async function seedDatabase() {
         phone: '+8801912334455',
         passwordHash: defaultPasswordHash,
         role: 'admin',
+        isSuperAdmin: true,
         isEmailVerified: true,
         isPhoneVerified: true,
-        profileImage: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=200&q=80',
+        profileImage: null,
       }).returning();
       adminId = newAdmin.id;
       console.log('   + Created Super Admin: admin@turfbd.com (pass: Password123!)');
@@ -47,7 +48,7 @@ async function seedDatabase() {
         role: 'owner',
         isEmailVerified: true,
         isPhoneVerified: true,
-        profileImage: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=200&q=80',
+        profileImage: null,
       }).returning();
       ownerId = newOwner.id;
       console.log('   + Created Venue Owner: owner@gulshanarena.com (pass: Password123!)');
@@ -66,7 +67,7 @@ async function seedDatabase() {
         role: 'customer',
         isEmailVerified: true,
         isPhoneVerified: true,
-        profileImage: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
+        profileImage: null,
       });
       console.log('   + Created Player User: tanvir@turfbd.com (pass: Password123!)');
     } else {

@@ -17,6 +17,8 @@ Before final handover, the following verifications were executed and validated:
 - [x] **Production Compilation**: Tested production build (`npm run build`) builds both Vite client (`dist/`) and bundles backend into standalone CommonJS (`dist/server.cjs`).
 - [x] **End-to-End Regression Testing**: 9/9 general regression tests passed (`npm run test:regression`).
 - [x] **Payment Security Suite**: 22/22 payment regression tests passed (`npm run test:payments`), confirming replay protection, amount tampering defense, and 5% commission math.
+- [x] **Phase 3 Real-time Slot Concurrency**: Transient slot holding (`/api/slots/hold`), SSE lock notifications, and double-booking race condition prevention.
+- [x] **Phase 4 Squad Pass Sharing & Cancellation Refund Engine**: WhatsApp squad invites with map directions, Google Calendar and `.ics` event export, and automated 3-tier refund policy calculation.
 - [x] **Database Seeding & Schema**: Automated migrations (`npm run db:push`) and seed scripts (`npm run db:seed`) verified.
 - [x] **Admin Tooling**: Dedicated CLI tool (`npm run admin:create`) ready for zero-downtime admin provisioning.
 

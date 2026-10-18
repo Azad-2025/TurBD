@@ -1,0 +1,33 @@
+{
+  "appId": "com.turfbd.desktop",
+  "productName": "TurfBD",
+  "copyright": "Copyright © 2026 TurfBD Bangladesh",
+  "directories": {
+    "output": "dist-desktop"
+  },
+  "files": [
+    "electron/**/*",
+    "dist/**/*",
+    "package.json"
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "public/favicon.ico",
+    "artifactName": "TurfBD-Setup.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "TurfBD Sports Arena",
+    "installerIcon": "public/favicon.ico",
+    "uninstallerIcon": "public/favicon.ico",
+    "installerHeaderIcon": "public/favicon.ico"
+  }
+}

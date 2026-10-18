@@ -22,8 +22,11 @@ interface AppContextType {
   turfs: Turf[];
   bookings: Booking[];
   reviews: Review[];
-  activeTab: 'browse' | 'my-bookings' | 'owner-dashboard' | 'admin-panel';
-  setActiveTab: (tab: 'browse' | 'my-bookings' | 'owner-dashboard' | 'admin-panel') => void;
+  activeTab: 'browse' | 'home' | 'explore' | 'my-bookings' | 'profile' | 'owner-dashboard' | 'admin-panel';
+  setActiveTab: (tab: 'browse' | 'home' | 'explore' | 'my-bookings' | 'profile' | 'owner-dashboard' | 'admin-panel') => void;
+  realtimeConnected: boolean;
+  lastRealtimeUpdate: Date | null;
+  slotUpdateCounter: number;
   selectedTurf: Turf | null;
   setSelectedTurf: (turf: Turf | null) => void;
   bookingTurf: Turf | null;
@@ -48,10 +51,9 @@ interface AppContextType {
   forgotPassword: (email: string) => Promise<{ success: boolean; message: string; resetToken?: string }>;
   resetPassword: (token: string, newPassword: string) => Promise<{ success: boolean; message: string }>;
   verifyEmail: (token: string) => Promise<{ success: boolean; message: string }>;
-  switchRole: (role: UserRole) => void;
   addTurf: (turf: Omit<Turf, 'id' | 'rating' | 'reviewCount' | 'status'>) => Promise<void>;
   updateTurf: (id: string, updates: Partial<Turf>) => Promise<void>;
-  setTurfStatus: (id: string, status: 'approved' | 'rejected') => Promise<void>;
+  setTurfStatus: (id: string, status: 'approved' | 'rejected' | 'suspended', reason?: string) => Promise<void>;
   createBooking: (bookingData: Omit<Booking, 'id' | 'bookingCode' | 'createdAt'>) => Promise<Booking>;
   updateBookingStatus: (
     bookingId: string,
@@ -62,7 +64,18 @@ interface AppContextType {
   addReview: (turfId: string, rating: number, comment: string) => Promise<void>;
   addOwnerReply: (reviewId: string, comment: string) => Promise<void>;
   updateUserRole: (userId: string, role: UserRole) => Promise<void>;
-  refreshData: () => Promise<void>;
+  // Super Admin safe preview capability
+  previewRole: 'customer' | 'owner' | null;
+  setPreviewRole: (role: 'customer' | 'owner' | null) => void;
+
+  // Profile management & photo methods
+  setCurrentUser: (user: User | null) => void;
+  updateProfile: (data: { name?: string; phone?: string; location?: string; profileImage?: string }) => Promise<User>;
+  uploadAvatar: (file: File) => Promise<string>;
+  deleteAvatar: () => Promise<void>;
+
+  favorites: string[];
+  toggleFavorite: (turfId: string) => void;
 }
 
 const defaultFilters: SearchFilters = {
@@ -71,41 +84,141 @@ const defaultFilters: SearchFilters = {
   area: 'All Areas',
   sport: 'all',
   date: new Date().toISOString().split('T')[0],
+  timeSlot: 'all',
+  venueType: 'all',
+  verifiedOnly: false,
+  badge: 'all',
+  maxDistanceKm: 25,
+  sortBy: 'recommended',
   maxPrice: 3500,
   amenity: 'all',
+  userLocation: {
+    latitude: 23.7925,
+    longitude: 90.4152,
+    name: 'Gulshan 2, Dhaka',
+    isDetected: false,
+  },
+  viewMode: 'split',
 };
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [users, setUsers] = useState<User[]>(INITIAL_USERS);
-  const [currentUser, setCurrentUser] = useState<User | null>(INITIAL_USERS[0]);
-  const [turfs, setTurfs] = useState<Turf[]>(INITIAL_TURFS);
-  const [bookings, setBookings] = useState<Booking[]>(INITIAL_BOOKINGS);
-  const [reviews, setReviews] = useState<Review[]>(INITIAL_REVIEWS);
+  const [users, setUsers] = useState<User[]>([]);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [turfs, setTurfs] = useState<Turf[]>([]);
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [reviews, setReviews] = useState<Review[]>([]);
   const [blockedSlots, setBlockedSlots] = useState<Record<string, boolean>>({});
+  const [realtimeConnected, setRealtimeConnected] = useState<boolean>(false);
+  const [lastRealtimeUpdate, setLastRealtimeUpdate] = useState<Date | null>(null);
+  const [slotUpdateCounter, setSlotUpdateCounter] = useState<number>(0);
 
-  const [activeTab, setActiveTab] = useState<'browse' | 'my-bookings' | 'owner-dashboard' | 'admin-panel'>('browse');
+  // Super Admin safe preview simulation (Customer or Owner layout)
+  const [previewRole, setPreviewRoleState] = useState<'customer' | 'owner' | null>(null);
+
+  const [activeTab, setActiveTabState] = useState<'browse' | 'home' | 'explore' | 'my-bookings' | 'profile' | 'owner-dashboard' | 'admin-panel'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = sessionStorage.getItem('turfbd_active_tab');
+      if (saved) return saved as any;
+    }
+    return 'home';
+  });
+
+  const setActiveTab = (tab: 'browse' | 'home' | 'explore' | 'my-bookings' | 'profile' | 'owner-dashboard' | 'admin-panel') => {
+    setActiveTabState(tab);
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('turfbd_active_tab', tab);
+    }
+  };
+
+  const setPreviewRole = (role: 'customer' | 'owner' | null) => {
+    if (currentUser?.role !== 'admin' || !currentUser?.isSuperAdmin) {
+      setPreviewRoleState(null);
+      return;
+    }
+    setPreviewRoleState(role);
+    if (role === 'customer') {
+      setActiveTab('home');
+    } else if (role === 'owner') {
+      setActiveTab('owner-dashboard');
+    } else {
+      setActiveTab('admin-panel');
+    }
+  };
+
   const [selectedTurf, setSelectedTurf] = useState<Turf | null>(null);
   const [bookingTurf, setBookingTurf] = useState<Turf | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
   const [searchFilters, setSearchFilters] = useState<SearchFilters>(defaultFilters);
+  const [favorites, setFavorites] = useState<string[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('turfbd_favorites');
+        return saved ? JSON.parse(saved) : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  });
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.classList.remove('dark');
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#0FA958');
+      try {
+        localStorage.removeItem('turfbd_theme');
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
+
+  const toggleFavorite = (turfId: string) => {
+    setFavorites((prev) => {
+      const updated = prev.includes(turfId)
+        ? prev.filter((id) => id !== turfId)
+        : [...prev, turfId];
+      try {
+        localStorage.setItem('turfbd_favorites', JSON.stringify(updated));
+      } catch {
+        // ignore
+      }
+      return updated;
+    });
+  };
 
   // Fetch live data from PostgreSQL API on mount
   const refreshData = async () => {
     try {
-      // Ensure we have a valid JWT token on startup
-      if (!api.getToken()) {
+      let activeUser: User | null = null;
+      // Validate active authenticated session if token exists
+      if (api.getToken()) {
         try {
-          const user = await api.login('tanvir@turfbd.com', 'password123');
-          setCurrentUser(user);
+          const me = await api.getMe();
+          if (me) {
+            activeUser = me;
+            setCurrentUser(me);
+            // Restore role view if user didn't explicitly pick a sub-page
+            const savedTab = typeof window !== 'undefined' ? sessionStorage.getItem('turfbd_active_tab') : null;
+            if (!savedTab || savedTab === 'home' || savedTab === 'browse') {
+              if (me.role === 'admin') {
+                setActiveTab('admin-panel');
+              } else if (me.role === 'owner') {
+                setActiveTab('owner-dashboard');
+              }
+            }
+          } else {
+            setCurrentUser(null);
+          }
         } catch {
-          // fallback
+          api.setToken(null, null);
+          setCurrentUser(null);
         }
       } else {
-        const me = await api.getMe();
-        if (me) setCurrentUser(me);
+        setCurrentUser(null);
       }
 
       const [fetchedTurfs, fetchedBookings, fetchedReviews, fetchedUsers] = await Promise.all([
@@ -115,17 +228,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         api.getUsers(),
       ]);
 
-      if (fetchedTurfs.length > 0) setTurfs(fetchedTurfs);
-      if (fetchedBookings.length > 0) setBookings(fetchedBookings);
-      if (fetchedReviews.length > 0) setReviews(fetchedReviews);
-      if (fetchedUsers.length > 0) {
-        setUsers(fetchedUsers);
-        // keep current user in sync
-        if (currentUser) {
-          const matched = fetchedUsers.find((u) => u.email.toLowerCase() === currentUser.email.toLowerCase());
-          if (matched) setCurrentUser(matched);
+      let combinedTurfs = fetchedTurfs || [];
+      if (activeUser && (activeUser as User).role === 'owner') {
+        try {
+          const ownerTurfs = await api.getOwnerTurfs((activeUser as User).id);
+          const existingIds = new Set(combinedTurfs.map((t) => t.id));
+          const ownerOnlyTurfs = ownerTurfs.filter((t) => !existingIds.has(t.id));
+          combinedTurfs = [...ownerOnlyTurfs, ...combinedTurfs];
+        } catch {
+          // ignore
         }
       }
+
+      setTurfs(combinedTurfs);
+      setBookings(fetchedBookings || []);
+      setReviews(fetchedReviews || []);
+      setUsers(fetchedUsers || []);
     } catch (err) {
       console.error('Initial PostgreSQL API sync error:', err);
     }
@@ -136,6 +254,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Listen for OAuth success messages from popup windows
     const handleMessage = (event: MessageEvent) => {
+      // Validate origin if coming from browser window
+      const origin = event.origin;
+      if (origin && !origin.endsWith('.run.app') && !origin.includes('localhost') && !origin.includes('127.0.0.1')) {
+        return;
+      }
+
       if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
         const { token, refreshToken, user } = event.data;
         if (token) {
@@ -144,13 +268,99 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (user) {
           setCurrentUser(user);
           setIsAuthModalOpen(false);
+          // Route user to appropriate interface based on server-authoritative role
+          if (user.role === 'admin') {
+            setActiveTab('admin-panel');
+          } else if (user.role === 'owner') {
+            setActiveTab('owner-dashboard');
+          } else {
+            setActiveTab('browse');
+          }
           refreshData();
         }
       }
     };
 
     window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
+
+    // Setup Real-time Server-Sent Events (SSE) listener for live availability sync
+    let eventSource: EventSource | null = null;
+    let reconnectTimeout: NodeJS.Timeout | null = null;
+
+    const connectSSE = () => {
+      try {
+        const token = api.getToken() || '';
+        const sseUrl = token ? `/api/realtime/events?token=${encodeURIComponent(token)}` : '/api/realtime/events';
+        eventSource = new EventSource(sseUrl);
+
+        eventSource.onopen = () => {
+          setRealtimeConnected(true);
+        };
+
+        eventSource.onmessage = (e) => {
+          try {
+            const payload = JSON.parse(e.data);
+            setLastRealtimeUpdate(new Date());
+
+            if (payload.type === 'SLOT_CHANGED') {
+              const { turfId, date, startTime, status } = payload;
+              const key = `${turfId}_${date}_${startTime}`;
+              setBlockedSlots((prev) => ({
+                ...prev,
+                [key]: status !== 'available',
+              }));
+              setSlotUpdateCounter((c) => c + 1);
+            } else if (payload.type === 'BOOKING_STATUS_CHANGED' || payload.type === 'BOOKING_CREATED') {
+              if (payload.bookingId && payload.status) {
+                setBookings((prev) =>
+                  prev.map((b) =>
+                    String(b.id) === String(payload.bookingId)
+                      ? { ...b, status: payload.status as BookingStatus }
+                      : b
+                  )
+                );
+              }
+              // Keep bookings in sync
+              api.getBookings().then((updated) => {
+                if (updated && updated.length > 0) setBookings(updated);
+              }).catch(() => {});
+            } else if (payload.type === 'TURF_STATUS_CHANGED') {
+              if (payload.turfId && payload.status) {
+                setTurfs((prev) =>
+                  prev.map((t) =>
+                    String(t.id) === String(payload.turfId)
+                      ? { ...t, status: payload.status as any }
+                      : t
+                  )
+                );
+              }
+            }
+          } catch (err) {
+            console.warn('Failed to parse realtime event:', err);
+          }
+        };
+
+        eventSource.onerror = () => {
+          setRealtimeConnected(false);
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+          reconnectTimeout = setTimeout(connectSSE, 4000);
+        };
+      } catch (err) {
+        console.warn('Realtime SSE connection failed, retrying in 5s...', err);
+        reconnectTimeout = setTimeout(connectSSE, 5000);
+      }
+    };
+
+    connectSSE();
+
+    return () => {
+      window.removeEventListener('message', handleMessage);
+      if (eventSource) eventSource.close();
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+    };
   }, []);
 
   const resetFilters = () => {
@@ -159,40 +369,80 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const login = async (email: string, password?: string): Promise<boolean> => {
     try {
+      if (typeof window !== 'undefined') sessionStorage.removeItem('turfbd_logged_out');
       const loggedUser = await api.login(email, password);
       setCurrentUser(loggedUser);
       setIsAuthModalOpen(false);
+      if (loggedUser.role === 'admin') {
+        setActiveTab('admin-panel');
+      } else if (loggedUser.role === 'owner') {
+        setActiveTab('owner-dashboard');
+      } else {
+        setActiveTab('home');
+      }
       await refreshData();
       return true;
     } catch (e) {
-      // Fallback to local user state if needed
-      const user = users.find((u) => u.email.toLowerCase() === email.toLowerCase());
-      if (user) {
-        setCurrentUser(user);
-        setIsAuthModalOpen(false);
-        return true;
-      }
+      console.error('Login error:', e);
       return false;
     }
   };
 
   const logout = async () => {
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('turfbd_logged_out', '1');
+      sessionStorage.removeItem('turfbd_active_tab');
+    }
     await api.logout();
     setCurrentUser(null);
-    setActiveTab('browse');
+    setBookings([]);
+    setPreviewRole(null);
+    setActiveTab('home');
   };
 
   const register = async (name: string, email: string, phone: string, role: UserRole, password?: string) => {
     try {
+      if (typeof window !== 'undefined') sessionStorage.removeItem('turfbd_logged_out');
       const newUser = await api.register({ name, email, phone, role, password });
       setCurrentUser(newUser);
-      setUsers((prev) => [...prev, newUser]);
       setIsAuthModalOpen(false);
+      if (newUser.role === 'owner') {
+        setActiveTab('owner-dashboard');
+      } else {
+        setActiveTab('home');
+      }
       await refreshData();
     } catch (err: any) {
       console.error('Failed to register on PostgreSQL:', err);
       throw err;
     }
+  };
+
+  const uploadAvatar = async (file: File): Promise<string> => {
+    const res = await api.uploadAvatar(file);
+    if (currentUser) {
+      setCurrentUser({
+        ...currentUser,
+        avatar: res.profileImage,
+      });
+    }
+    return res.profileImage;
+  };
+
+  const deleteAvatar = async (): Promise<void> => {
+    await api.deleteAvatar();
+    if (currentUser) {
+      setCurrentUser({
+        ...currentUser,
+        avatar: undefined,
+      });
+    }
+  };
+
+  const updateProfile = async (data: { name?: string; phone?: string; location?: string; profileImage?: string }) => {
+    const updated = await api.updateProfile(data);
+    setCurrentUser(updated);
+    return updated;
   };
 
   const sendPhoneOtp = async (phone: string) => {
@@ -201,9 +451,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const loginWithPhoneOtp = async (phone: string, code: string, name?: string, role?: UserRole): Promise<boolean> => {
     try {
+      if (typeof window !== 'undefined') sessionStorage.removeItem('turfbd_logged_out');
       const { user } = await api.verifyOtp(phone, code, name, role);
       setCurrentUser(user);
       setIsAuthModalOpen(false);
+      if (user.role === 'admin') {
+        setActiveTab('admin-panel');
+      } else if (user.role === 'owner') {
+        setActiveTab('owner-dashboard');
+      } else {
+        setActiveTab('home');
+      }
       await refreshData();
       return true;
     } catch (err) {
@@ -216,32 +474,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const authInfo = provider === 'google' ? await api.getGoogleAuthUrl() : await api.getFacebookAuthUrl();
 
-      // If provider is configured with real client credentials, launch popup
-      if (authInfo.configured) {
+      if (authInfo.enabled === false) {
+        throw new Error(authInfo.error || `${provider === 'google' ? 'Google' : 'Facebook'} Login is temporarily disabled.`);
+      }
+
+      if (authInfo.configured && authInfo.url) {
         const width = 500;
-        const height = 600;
+        const height = 620;
         const left = window.screenX + (window.outerWidth - width) / 2;
         const top = window.screenY + (window.outerHeight - height) / 2.5;
 
-        window.open(
+        const popup = window.open(
           authInfo.url,
           `${provider}_oauth_popup`,
           `width=${width},height=${height},left=${left},top=${top},status=yes,scrollbars=yes`
         );
+        if (!popup) {
+          throw new Error('Popup window was blocked by your browser. Please allow popups for TurfBD to complete login.');
+        }
       } else {
-        // Instant 1-click preview authentication
-        const { user } = await api.socialLoginMock(provider);
-        setCurrentUser(user);
-        setIsAuthModalOpen(false);
-        await refreshData();
+        const providerName = provider === 'google' ? 'Google' : 'Facebook';
+        const requiredVars = provider === 'google' ? 'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET' : 'FACEBOOK_APP_ID and FACEBOOK_APP_SECRET';
+        const errorMsg = authInfo.error || `${providerName} Login is not configured on the server. Required environment variables: ${requiredVars}. Callback URL: ${authInfo.redirectUri}`;
+        throw new Error(errorMsg);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(`${provider} login failed:`, err);
-      // Fallback to mock login
-      const { user } = await api.socialLoginMock(provider);
-      setCurrentUser(user);
-      setIsAuthModalOpen(false);
-      await refreshData();
+      throw err;
     }
   };
 
@@ -255,33 +514,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const verifyEmail = async (token: string) => {
     return await api.verifyEmail(token);
-  };
-
-  const switchRole = async (role: UserRole) => {
-    const emailByRole: Record<string, string> = {
-      customer: 'tanvir@turfbd.com',
-      player: 'tanvir@turfbd.com',
-      owner: 'owner@gulshanarena.com',
-      admin: 'admin@turfbd.com',
-    };
-    const targetEmail = emailByRole[role] || 'tanvir@turfbd.com';
-
-    try {
-      const loggedUser = await api.login(targetEmail, 'password123');
-      setCurrentUser(loggedUser);
-    } catch (err) {
-      console.error('Failed to switch persona via login:', err);
-      const existing = users.find((u) => u.role === role);
-      if (existing) setCurrentUser(existing);
-    }
-
-    if (role === 'owner') {
-      setActiveTab('owner-dashboard');
-    } else if (role === 'admin') {
-      setActiveTab('admin-panel');
-    } else {
-      setActiveTab('browse');
-    }
   };
 
   const toggleSlotBlock = async (turfId: string, date: string, time: string, status?: string) => {
@@ -329,11 +561,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await api.updateTurf(id, updates).catch(console.error);
   };
 
-  const setTurfStatus = async (id: string, status: 'approved' | 'rejected') => {
+  const setTurfStatus = async (id: string, status: 'approved' | 'rejected' | 'suspended', reason?: string) => {
     setTurfs((prev) =>
       prev.map((t) => (t.id === id ? { ...t, status } : t))
     );
-    await api.setTurfStatus(id, status).catch(console.error);
+    await api.moderateTurf(id, status, {
+      rejectionReason: status === 'rejected' ? reason : undefined,
+      suspensionReason: status === 'suspended' ? reason : undefined,
+    }).catch(console.error);
   };
 
   const createBooking = async (bookingData: Omit<Booking, 'id' | 'bookingCode' | 'createdAt'>): Promise<Booking> => {
@@ -481,6 +716,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         reviews,
         activeTab,
         setActiveTab,
+        realtimeConnected,
+        lastRealtimeUpdate,
+        slotUpdateCounter,
         selectedTurf,
         setSelectedTurf,
         bookingTurf,
@@ -503,7 +741,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         forgotPassword,
         resetPassword,
         verifyEmail,
-        switchRole,
         addTurf,
         updateTurf,
         setTurfStatus,
@@ -514,6 +751,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addOwnerReply,
         updateUserRole,
         refreshData,
+        previewRole,
+        setPreviewRole,
+        setCurrentUser,
+        updateProfile,
+        uploadAvatar,
+        deleteAvatar,
+        favorites,
+        toggleFavorite,
       }}
     >
       {children}

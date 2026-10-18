@@ -1,6 +1,14 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { TurfBDLogo } from './TurfBDLogo';
+import { NotificationBell } from './NotificationBell';
+import { NotificationHistoryModal } from './NotificationHistoryModal';
+import { MobileAppHeader } from './MobileAppHeader';
+import { PWAInstallBanner } from './PWAInstallBanner';
+import { DesktopAppModal } from './DesktopAppModal';
+import { GateCheckInModal } from './GateCheckInModal';
+import { UserAvatar } from './UserAvatar';
+import { usePWAInstall } from '../utils/usePWAInstall';
 import {
   Calendar,
   ShieldCheck,
@@ -9,10 +17,11 @@ import {
   User as UserIcon,
   LogOut,
   ChevronDown,
-  Menu,
-  X,
-  PlusCircle,
   MapPin,
+  Download,
+  Monitor,
+  Scan,
+  Eye,
 } from 'lucide-react';
 import { UserRole } from '../types';
 
@@ -24,332 +33,348 @@ export const Navbar: React.FC = () => {
     setActiveTab,
     setIsAuthModalOpen,
     setAuthMode,
-    switchRole,
     searchFilters,
     setSearchFilters,
+    realtimeConnected,
+    previewRole,
+    setPreviewRole,
+    turfs,
+    refreshBookings,
   } = useApp();
 
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isRoleDropdownOpen, setIsRoleDropdownOpen] = useState(false);
-
-  const handleRoleSelect = (role: UserRole) => {
-    switchRole(role);
-    setIsRoleDropdownOpen(false);
-  };
+  const [isNotificationHistoryOpen, setIsNotificationHistoryOpen] = useState(false);
+  const [isDesktopModalOpen, setIsDesktopModalOpen] = useState(false);
+  const [isGateCheckInOpen, setIsGateCheckInOpen] = useState(false);
+  const [isPreviewMenuOpen, setIsPreviewMenuOpen] = useState(false);
+  const { isElectron } = usePWAInstall();
 
   return (
-    <header className="sticky top-0 z-40 bg-neutral-900/95 backdrop-blur border-b border-neutral-800">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16 sm:h-18">
-          {/* Logo & City Selector */}
-          <div className="flex items-center gap-3 sm:gap-6">
-            <button
-              onClick={() => setActiveTab('browse')}
-              className="flex items-center group cursor-pointer focus:outline-none"
-              id="brand-logo-btn"
-              title="TurfBD - Sports Turf Booking"
-            >
-              <TurfBDLogo
-                layout="horizontal"
-                size="md"
-                variant="dark"
-                showTagline={true}
-                taglineText="Sports Turf Booking"
-                showBadge={true}
-                badgeText="MVP"
-              />
-            </button>
+    <>
+      {/* =========================================================================
+          1. MOBILE VIEW (< 768px): Dedicated Mobile App Header
+         ========================================================================= */}
+      <div className="block md:hidden">
+        <MobileAppHeader />
+      </div>
 
-            {/* Quick City Dropdown */}
-            <div className="hidden md:flex items-center gap-1.5 bg-neutral-800/80 border border-neutral-700/60 rounded-lg px-2.5 py-1.5 text-xs text-neutral-300">
-              <MapPin className="w-3.5 h-3.5 text-emerald-400" />
-              <select
-                value={searchFilters.city}
-                onChange={(e) => setSearchFilters((prev) => ({ ...prev, city: e.target.value }))}
-                className="bg-transparent border-none text-xs text-neutral-200 focus:outline-none cursor-pointer pr-1"
-                id="header-city-select"
-              >
-                <option value="All Cities" className="bg-neutral-900">All Bangladesh</option>
-                <option value="Dhaka" className="bg-neutral-900">Dhaka</option>
-                <option value="Chattogram" className="bg-neutral-900">Chattogram</option>
-                <option value="Sylhet" className="bg-neutral-900">Sylhet</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Desktop Navigation Tabs */}
-          <nav className="hidden lg:flex items-center gap-1">
-            <button
-              onClick={() => setActiveTab('browse')}
-              className={`px-3.5 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors ${
-                activeTab === 'browse'
-                  ? 'bg-neutral-800 text-emerald-400 border border-neutral-700'
-                  : 'text-neutral-300 hover:text-white hover:bg-neutral-800/50'
-              }`}
-              id="nav-browse-btn"
-            >
-              <Compass className="w-4 h-4" />
-              <span>Explore Turfs</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('my-bookings')}
-              className={`px-3.5 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors ${
-                activeTab === 'my-bookings'
-                  ? 'bg-neutral-800 text-emerald-400 border border-neutral-700'
-                  : 'text-neutral-300 hover:text-white hover:bg-neutral-800/50'
-              }`}
-              id="nav-bookings-btn"
-            >
-              <Calendar className="w-4 h-4" />
-              <span>My Bookings</span>
-            </button>
-
-            <button
-              onClick={() => {
-                if (currentUser?.role !== 'owner' && currentUser?.role !== 'admin') {
-                  switchRole('owner');
-                }
-                setActiveTab('owner-dashboard');
-              }}
-              className={`px-3.5 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors ${
-                activeTab === 'owner-dashboard'
-                  ? 'bg-neutral-800 text-emerald-400 border border-neutral-700'
-                  : 'text-neutral-300 hover:text-white hover:bg-neutral-800/50'
-              }`}
-              id="nav-owner-btn"
-            >
-              <Building2 className="w-4 h-4" />
-              <span>Owner Dashboard</span>
-            </button>
-
-            <button
-              onClick={() => {
-                if (currentUser?.role !== 'admin') {
-                  switchRole('admin');
-                }
-                setActiveTab('admin-panel');
-              }}
-              className={`px-3.5 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors ${
-                activeTab === 'admin-panel'
-                  ? 'bg-neutral-800 text-emerald-400 border border-neutral-700'
-                  : 'text-neutral-300 hover:text-white hover:bg-neutral-800/50'
-              }`}
-              id="nav-admin-btn"
-            >
-              <ShieldCheck className="w-4 h-4" />
-              <span>Admin Panel</span>
-            </button>
-          </nav>
-
-          {/* Right Action: Role Quick-Switcher & Auth */}
-          <div className="flex items-center gap-2 sm:gap-3">
-            {/* Quick Demo Role Switcher Badge */}
-            <div className="relative">
+      {/* =========================================================================
+          2. DESKTOP & TABLET VIEW (>= 768px): Full Website Navigation Bar
+         ========================================================================= */}
+      <header className="hidden md:block sticky top-0 z-40 bg-white/95 dark:bg-[#0B1315]/95 backdrop-blur-md border-b border-slate-200/90 dark:border-slate-800/90 shadow-xs pt-[env(safe-area-inset-top,0px)] transition-colors duration-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16 sm:h-18">
+            {/* Logo & City Selector */}
+            <div className="flex items-center gap-4 sm:gap-6 shrink-0">
               <button
-                onClick={() => setIsRoleDropdownOpen(!isRoleDropdownOpen)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-750 border border-neutral-700 rounded-lg text-xs font-semibold text-neutral-200 transition-colors shadow-sm"
-                title="Switch demo persona to test player, owner, or admin features"
-                id="role-switcher-btn"
+                onClick={() => setActiveTab('home')}
+                className="flex items-center group cursor-pointer focus:outline-none active:scale-95 transition-transform shrink-0"
+                id="brand-logo-btn"
+                title="TurfBD - Sports Turf Booking"
               >
-                <span className="text-neutral-400 hidden sm:inline">Role:</span>
-                <span className={`capitalize font-bold ${
-                  currentUser?.role === 'admin' ? 'text-purple-400' :
-                  currentUser?.role === 'owner' ? 'text-amber-400' : 'text-emerald-400'
-                }`}>
-                  {currentUser?.role || 'Guest'}
-                </span>
-                <ChevronDown className="w-3.5 h-3.5 text-neutral-400" />
+                <TurfBDLogo
+                  layout="horizontal"
+                  size="md"
+                  variant="brand"
+                  showTagline={false}
+                  showBadge={true}
+                  badgeText="Sports"
+                  id="desktop-brand-logo"
+                />
               </button>
 
-              {isRoleDropdownOpen && (
-                <div
-                  className="absolute right-0 mt-2 w-56 bg-neutral-900 border border-neutral-800 rounded-xl shadow-2xl p-2 z-50 text-xs"
-                  id="role-switcher-dropdown"
+              {/* Quick City Dropdown Pill */}
+              <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-full px-3 py-1.5 text-xs text-slate-700 dark:text-slate-200 shadow-2xs">
+                <MapPin className="w-3.5 h-3.5 text-[#0FA958]" />
+                <select
+                  value={searchFilters.city}
+                  onChange={(e) =>
+                    setSearchFilters((prev) => ({
+                      ...prev,
+                      city: e.target.value,
+                      area: 'All Areas',
+                    }))
+                  }
+                  className="bg-transparent border-none text-xs font-semibold text-slate-800 dark:text-slate-100 focus:outline-none cursor-pointer pr-1"
+                  id="header-city-select"
                 >
-                  <p className="px-2 py-1 text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">
-                    Switch Active Role
-                  </p>
+                  <option value="All Cities">All BD (Entire Country)</option>
+                  <option value="Dhaka">Dhaka</option>
+                  <option value="Chattogram">Chattogram</option>
+                  <option value="Sylhet">Sylhet</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Centered Rounded Desktop Navigation Menu */}
+            <nav className="flex items-center gap-1 bg-slate-100/90 dark:bg-slate-800/90 p-1 rounded-full border border-slate-200/90 dark:border-slate-700/80 shadow-2xs" id="desktop-centered-nav">
+              <button
+                onClick={() => setActiveTab('home')}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  activeTab === 'home' || activeTab === 'browse'
+                    ? 'bg-white dark:bg-slate-900 text-[#064E3B] dark:text-emerald-300 shadow-2xs font-extrabold border border-slate-200/50 dark:border-slate-700/50'
+                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-700/60'
+                }`}
+                id="nav-browse-btn"
+              >
+                <Compass className="w-3.5 h-3.5 text-[#0FA958]" />
+                <span>Explore Turfs</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('my-bookings')}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  activeTab === 'my-bookings'
+                    ? 'bg-white dark:bg-slate-900 text-[#064E3B] dark:text-emerald-300 shadow-2xs font-extrabold border border-slate-200/50 dark:border-slate-700/50'
+                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-700/60'
+                }`}
+                id="nav-bookings-btn"
+              >
+                <Calendar className="w-3.5 h-3.5 text-[#0FA958]" />
+                <span>My Bookings</span>
+              </button>
+
+              {/* Turf Owner Portal (Visible if approved owner, admin, or previewing owner) */}
+              {(previewRole === 'owner' || (currentUser && (currentUser.role === 'owner' || currentUser.role === 'admin'))) && previewRole !== 'customer' && (
+                <button
+                  onClick={() => setActiveTab('owner-dashboard')}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    activeTab === 'owner-dashboard'
+                      ? 'bg-white dark:bg-slate-900 text-[#064E3B] dark:text-emerald-300 shadow-2xs font-extrabold border border-slate-200/50 dark:border-slate-700/50'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-700/60'
+                  }`}
+                  id="nav-owner-btn"
+                >
+                  <Building2 className="w-3.5 h-3.5 text-[#0FA958]" />
+                  <span>Owner Dashboard</span>
+                </button>
+              )}
+
+              {/* Admin Command Center (Restricted to actual admin accounts, hidden in preview) */}
+              {currentUser && currentUser.role === 'admin' && !previewRole && (
+                <button
+                  onClick={() => setActiveTab('admin-panel')}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    activeTab === 'admin-panel'
+                      ? 'bg-purple-600 text-white shadow-2xs font-extrabold'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-700/60'
+                  }`}
+                  id="nav-admin-btn"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-purple-200" />
+                  <span>Admin Panel</span>
+                </button>
+              )}
+
+              {/* Super Admin Safe View Preview Selector */}
+              {currentUser && currentUser.role === 'admin' && currentUser.isSuperAdmin && (
+                <div className="relative">
                   <button
-                    onClick={() => handleRoleSelect('player')}
-                    className={`w-full text-left px-2.5 py-2 rounded-lg flex items-center justify-between font-medium transition-colors ${
-                      currentUser?.role === 'player'
-                        ? 'bg-emerald-500/15 text-emerald-400'
-                        : 'text-neutral-300 hover:bg-neutral-800'
+                    onClick={() => setIsPreviewMenuOpen(!isPreviewMenuOpen)}
+                    className={`px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer border ${
+                      previewRole
+                        ? 'bg-purple-100 text-purple-900 border-purple-300 shadow-2xs'
+                        : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
                     }`}
+                    title="Safely preview interface layouts for different roles"
                   >
-                    <div className="flex items-center gap-2">
-                      <span>⚽</span>
-                      <div>
-                        <div className="font-semibold">Player / Team</div>
-                        <div className="text-[10px] text-neutral-400">Search & book slots</div>
+                    <Eye className="w-3.5 h-3.5 text-purple-600" />
+                    <span>{previewRole ? `Preview: ${previewRole}` : 'Preview View'}</span>
+                    <ChevronDown className="w-3 h-3 text-slate-400" />
+                  </button>
+
+                  {isPreviewMenuOpen && (
+                    <div className="absolute top-full mt-1.5 left-0 w-52 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl py-2 z-50 animate-fadeIn">
+                      <div className="px-3 py-1.5 text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                        Role View Simulation
                       </div>
+                      <button
+                        onClick={() => {
+                          setPreviewRole('customer');
+                          setIsPreviewMenuOpen(false);
+                        }}
+                        className={`w-full text-left px-3.5 py-2 text-xs flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors ${
+                          previewRole === 'customer' ? 'font-bold text-[#0FA958]' : 'text-slate-700 dark:text-slate-200'
+                        }`}
+                      >
+                        <span>👥 Customer View</span>
+                        {previewRole === 'customer' && <span className="text-[10px]">Active</span>}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setPreviewRole('owner');
+                          setIsPreviewMenuOpen(false);
+                        }}
+                        className={`w-full text-left px-3.5 py-2 text-xs flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors ${
+                          previewRole === 'owner' ? 'font-bold text-amber-600' : 'text-slate-700 dark:text-slate-200'
+                        }`}
+                      >
+                        <span>🏟️ Turf Owner View</span>
+                        {previewRole === 'owner' && <span className="text-[10px]">Active</span>}
+                      </button>
+                      {previewRole && (
+                        <div className="border-t border-slate-100 dark:border-slate-800 mt-1 pt-1">
+                          <button
+                            onClick={() => {
+                              setPreviewRole(null);
+                              setIsPreviewMenuOpen(false);
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-bold text-purple-700 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/50 transition-colors"
+                          >
+                            🛡️ Exit Preview (Admin)
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    {currentUser?.role === 'player' && <span className="text-xs">✓</span>}
+                  )}
+                </div>
+              )}
+            </nav>
+
+            {/* Right Side: PWA Button, Windows App Button, Notifications, Real Role Badge, Profile & Logout */}
+            <div className="flex items-center gap-2.5">
+              {/* Gate Check-In Quick Button for Owners & Admins */}
+              {currentUser && (currentUser.role === 'owner' || currentUser.role === 'admin') && (
+                <button
+                  onClick={() => setIsGateCheckInOpen(true)}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold text-[#064E3B] dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 border border-emerald-200 dark:border-emerald-800 transition-colors cursor-pointer shadow-2xs"
+                  title="Gate Check-In / Scan Match QR"
+                  id="nav-gate-checkin-btn"
+                >
+                  <Scan className="w-3.5 h-3.5 text-[#0FA958]" />
+                  <span className="hidden md:inline">Gate Scan</span>
+                </button>
+              )}
+
+              {/* Compact PWA Install button */}
+              <PWAInstallBanner compact={true} />
+
+              {/* Windows Desktop App Button (Only in web browser, hidden inside Electron desktop app) */}
+              {!isElectron && (
+                <button
+                  onClick={() => setIsDesktopModalOpen(true)}
+                  className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-[#064E3B] dark:hover:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 border border-slate-200 dark:border-slate-700 transition-colors cursor-pointer"
+                  title="Download TurfBD for Windows (TurfBD-Setup.exe)"
+                  id="nav-desktop-app-btn"
+                >
+                  <Monitor className="w-3.5 h-3.5 text-[#0FA958]" />
+                  <span>Windows App</span>
+                </button>
+              )}
+
+              {/* Verified Server-Determined Role Badge (Read-Only) */}
+              {currentUser && (
+                <div
+                  className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${
+                    currentUser.role === 'admin'
+                      ? 'bg-purple-50 dark:bg-purple-950/50 border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300'
+                      : currentUser.role === 'owner'
+                      ? 'bg-amber-50 dark:bg-amber-950/50 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300'
+                      : 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-200 dark:border-emerald-800 text-[#064E3B] dark:text-emerald-300'
+                  }`}
+                  id="verified-role-badge"
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      currentUser.role === 'admin'
+                        ? 'bg-purple-500'
+                        : currentUser.role === 'owner'
+                        ? 'bg-amber-500'
+                        : 'bg-[#0FA958]'
+                    }`}
+                  />
+                  <span>
+                    {currentUser.role === 'admin'
+                      ? currentUser.isSuperAdmin
+                        ? 'Super Admin'
+                        : 'Platform Admin'
+                      : currentUser.role === 'owner'
+                      ? 'Turf Owner'
+                      : 'Customer'}
+                  </span>
+                </div>
+              )}
+
+              {/* Notification Bell with Badge & Dropdown */}
+              <NotificationBell onOpenHistory={() => setIsNotificationHistoryOpen(true)} />
+
+              {/* Real Authentication: Profile & Logout or Sign In / Register */}
+              {currentUser ? (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setActiveTab('profile')}
+                    className="flex items-center gap-2 p-1 pl-1.5 pr-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors cursor-pointer border border-slate-200 dark:border-slate-700"
+                    title="My Profile"
+                    id="nav-profile-btn"
+                  >
+                    <UserAvatar name={currentUser.name} avatar={currentUser.avatar} size="sm" shape="circle" />
+                    <span className="text-xs font-semibold text-slate-800 dark:text-slate-100 max-w-[100px] truncate hidden lg:inline">
+                      {currentUser.name.split(' ')[0]}
+                    </span>
                   </button>
 
                   <button
-                    onClick={() => handleRoleSelect('owner')}
-                    className={`w-full text-left px-2.5 py-2 rounded-lg flex items-center justify-between font-medium transition-colors ${
-                      currentUser?.role === 'owner'
-                        ? 'bg-amber-500/15 text-amber-400'
-                        : 'text-neutral-300 hover:bg-neutral-800'
-                    }`}
+                    onClick={logout}
+                    className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition-colors cursor-pointer"
+                    title="Sign Out"
+                    aria-label="Sign Out"
+                    id="nav-logout-btn"
                   >
-                    <div className="flex items-center gap-2">
-                      <span>🏟️</span>
-                      <div>
-                        <div className="font-semibold">Turf Owner</div>
-                        <div className="text-[10px] text-neutral-400">Manage turf & bookings</div>
-                      </div>
-                    </div>
-                    {currentUser?.role === 'owner' && <span className="text-xs">✓</span>}
+                    <LogOut className="w-4 h-4" />
                   </button>
-
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5">
                   <button
-                    onClick={() => handleRoleSelect('admin')}
-                    className={`w-full text-left px-2.5 py-2 rounded-lg flex items-center justify-between font-medium transition-colors ${
-                      currentUser?.role === 'admin'
-                        ? 'bg-purple-500/15 text-purple-400'
-                        : 'text-neutral-300 hover:bg-neutral-800'
-                    }`}
+                    onClick={() => {
+                      setAuthMode('signin');
+                      setIsAuthModalOpen(true);
+                    }}
+                    className="px-3.5 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-200 hover:text-[#0FA958] transition-colors cursor-pointer"
+                    id="header-signin-btn"
                   >
-                    <div className="flex items-center gap-2">
-                      <span>🛡️</span>
-                      <div>
-                        <div className="font-semibold">Super Admin</div>
-                        <div className="text-[10px] text-neutral-400">Approve turfs & monitor</div>
-                      </div>
-                    </div>
-                    {currentUser?.role === 'admin' && <span className="text-xs">✓</span>}
+                    Sign In
+                  </button>
+                  <button
+                    onClick={() => {
+                      setAuthMode('signup');
+                      setIsAuthModalOpen(true);
+                    }}
+                    className="px-3.5 py-1.5 text-xs font-bold bg-[#0FA958] hover:bg-[#0da052] text-white rounded-xl transition-all shadow-sm shadow-[#0FA958]/25 cursor-pointer"
+                    id="header-register-btn"
+                  >
+                    Register
                   </button>
                 </div>
               )}
             </div>
-
-            {/* Auth Button or User Profile */}
-            {currentUser ? (
-              <div className="flex items-center gap-2">
-                <div className="hidden sm:flex items-center gap-2 bg-neutral-800/80 border border-neutral-700/60 rounded-lg pl-2 pr-3 py-1">
-                  <div className="w-6 h-6 rounded-full overflow-hidden bg-neutral-700 flex items-center justify-center text-xs font-bold text-white">
-                    {currentUser.avatar ? (
-                      <img src={currentUser.avatar} alt={currentUser.name} className="w-full h-full object-cover" />
-                    ) : (
-                      currentUser.name.charAt(0)
-                    )}
-                  </div>
-                  <span className="text-xs font-semibold text-neutral-200 max-w-[120px] truncate">
-                    {currentUser.name}
-                  </span>
-                </div>
-                <button
-                  onClick={logout}
-                  className="p-2 text-neutral-400 hover:text-red-400 hover:bg-neutral-800 rounded-lg transition-colors"
-                  title="Logout"
-                  id="logout-btn"
-                >
-                  <LogOut className="w-4 h-4" />
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={() => {
-                    setAuthMode('signin');
-                    setIsAuthModalOpen(true);
-                  }}
-                  className="px-3 py-1.5 text-xs font-semibold text-neutral-300 hover:text-white rounded-lg hover:bg-neutral-800 transition-colors"
-                  id="header-signin-btn"
-                >
-                  Sign In
-                </button>
-                <button
-                  onClick={() => {
-                    setAuthMode('signup');
-                    setIsAuthModalOpen(true);
-                  }}
-                  className="px-3 py-1.5 text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-neutral-950 rounded-lg transition-colors shadow-sm"
-                  id="header-signup-btn"
-                >
-                  Register
-                </button>
-              </div>
-            )}
-
-            {/* Mobile Menu Button */}
-            <button
-              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="lg:hidden p-2 text-neutral-300 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors"
-              id="mobile-menu-toggle"
-            >
-              {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-            </button>
           </div>
         </div>
 
-        {/* Mobile Navigation Drawer */}
-        {isMobileMenuOpen && (
-          <div className="lg:hidden py-3 border-t border-neutral-800 space-y-1" id="mobile-nav">
-            <button
-              onClick={() => {
-                setActiveTab('browse');
-                setIsMobileMenuOpen(false);
-              }}
-              className={`w-full text-left px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-3 ${
-                activeTab === 'browse' ? 'bg-neutral-800 text-emerald-400' : 'text-neutral-300'
-              }`}
-            >
-              <Compass className="w-4 h-4" />
-              <span>Explore Turfs</span>
-            </button>
+        {/* Notification Full History Modal / Drawer */}
+        <NotificationHistoryModal
+          isOpen={isNotificationHistoryOpen}
+          onClose={() => setIsNotificationHistoryOpen(false)}
+        />
 
-            <button
-              onClick={() => {
-                setActiveTab('my-bookings');
-                setIsMobileMenuOpen(false);
-              }}
-              className={`w-full text-left px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-3 ${
-                activeTab === 'my-bookings' ? 'bg-neutral-800 text-emerald-400' : 'text-neutral-300'
-              }`}
-            >
-              <Calendar className="w-4 h-4" />
-              <span>My Bookings</span>
-            </button>
+        {/* Windows Desktop Application Installer Modal */}
+        <DesktopAppModal
+          isOpen={isDesktopModalOpen}
+          onClose={() => setIsDesktopModalOpen(false)}
+        />
 
-            <button
-              onClick={() => {
-                if (currentUser?.role !== 'owner' && currentUser?.role !== 'admin') {
-                  switchRole('owner');
-                }
-                setActiveTab('owner-dashboard');
-                setIsMobileMenuOpen(false);
-              }}
-              className={`w-full text-left px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-3 ${
-                activeTab === 'owner-dashboard' ? 'bg-neutral-800 text-emerald-400' : 'text-neutral-300'
-              }`}
-            >
-              <Building2 className="w-4 h-4" />
-              <span>Owner Dashboard</span>
-            </button>
-
-            <button
-              onClick={() => {
-                if (currentUser?.role !== 'admin') {
-                  switchRole('admin');
-                }
-                setActiveTab('admin-panel');
-                setIsMobileMenuOpen(false);
-              }}
-              className={`w-full text-left px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-3 ${
-                activeTab === 'admin-panel' ? 'bg-neutral-800 text-emerald-400' : 'text-neutral-300'
-              }`}
-            >
-              <ShieldCheck className="w-4 h-4" />
-              <span>Admin Panel</span>
-            </button>
-          </div>
+        {/* Gate Check-In & Match Pass Scanner Modal */}
+        {isGateCheckInOpen && (
+          <GateCheckInModal
+            turfs={
+              currentUser?.role === 'admin'
+                ? turfs
+                : turfs.filter((t) => t.ownerId === currentUser?.id)
+            }
+            onClose={() => setIsGateCheckInOpen(false)}
+            onCheckInComplete={() => refreshBookings()}
+          />
         )}
-      </div>
-    </header>
+      </header>
+    </>
   );
 };

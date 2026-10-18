@@ -26,52 +26,88 @@ async function runRegression() {
   console.log('Starting TurfBD Production Payment Regression Suite');
   console.log('====================================================\n');
 
-  // 1. Setup test fixture tokens
+  // 1. Setup test fixture tokens from running server
   const [customer] = await db.select().from(users).where(eq(users.role, 'customer'));
   const [owner] = await db.select().from(users).where(eq(users.id, 2));
   const [admin] = await db.select().from(users).where(eq(users.role, 'admin'));
   const [turf] = await db.select().from(turfs).where(and(eq(turfs.ownerId, owner.id), eq(turfs.verificationStatus, 'approved')));
 
-  const customerToken = generateAccessToken({ id: customer.id, email: customer.email, role: customer.role });
-  const ownerToken = generateAccessToken({ id: owner.id, email: owner.email, role: owner.role });
-  const adminToken = generateAccessToken({ id: admin.id, email: admin.email, role: admin.role });
+  const loginServer = async (email: string, password = 'Password123!') => {
+    const res = await fetch(`${BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    return data.token;
+  };
+
+  let customerToken = await loginServer(customer.email);
+  if (!customerToken) {
+    const regRes = await fetch(`${BASE_URL}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Test Customer',
+        email: `test_${Date.now()}@turfbd.com`,
+        phone: '+88017' + Math.floor(10000000 + Math.random() * 90000000),
+        password: 'Password123!',
+        role: 'customer',
+      }),
+    });
+    const regData = await regRes.json();
+    customerToken = regData.token;
+  }
+
+  let ownerToken = await loginServer(owner.email);
+  if (!ownerToken) {
+    ownerToken = generateAccessToken({ id: owner.id, email: owner.email, role: owner.role });
+  }
+
+  let adminToken = await loginServer(admin.email);
+  if (!adminToken) {
+    adminToken = generateAccessToken({ id: admin.id, email: admin.email, role: admin.role });
+  }
 
   console.log(`Fixtures ready: Customer (${customer.email}), Owner (${owner.email}), Admin (${admin.email}), Turf #${turf.id} (${turf.turfName})\n`);
 
   // Helper to create a clean test booking with guaranteed unbooked slots
-  let runCounter = 1;
-  const runBatchId = Math.floor(Date.now() / 1000);
+  let runCounter = Math.floor(Math.random() * 10000);
   async function createTestBooking(_ignoredDate?: string, _ignoredTime?: string) {
-    runCounter++;
-    const year = 2031 + (runCounter % 10);
-    const month = ((runCounter % 12) + 1).toString().padStart(2, '0');
-    const day = (((runCounter + runBatchId) % 28) + 1).toString().padStart(2, '0');
-    const hour = (7 + (runCounter % 15)).toString().padStart(2, '0');
+    for (let attempt = 0; attempt < 25; attempt++) {
+      runCounter++;
+      const year = 2045 + Math.floor(Math.random() * 50);
+      const month = String(Math.floor(Math.random() * 12) + 1).padStart(2, '0');
+      const day = String(Math.floor(Math.random() * 28) + 1).padStart(2, '0');
+      const hourNum = 7 + Math.floor(Math.random() * 15);
+      const hour = String(hourNum).padStart(2, '0');
+      const minute = Math.random() > 0.5 ? '30' : '00';
 
-    const dateStr = `${year}-${month}-${day}`;
-    const timeStr = `${hour}:00`;
-    const endTime = `${(parseInt(hour, 10) + 1).toString().padStart(2, '0')}:00`;
+      const dateStr = `${year}-${month}-${day}`;
+      const timeStr = `${hour}:${minute}`;
+      const endTime = `${String(hourNum + 1).padStart(2, '0')}:${minute}`;
 
-    const res = await fetch(`${BASE_URL}/api/bookings`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${customerToken}`,
-      },
-      body: JSON.stringify({
-        turfId: turf.id,
-        bookingDate: dateStr,
-        startTime: timeStr,
-        endTime,
-        isAdvanceOnly: true,
-        notes: JSON.stringify({ testRun: true, runBatchId }),
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      console.error('Failed to create test booking:', res.status, data);
+      const res = await fetch(`${BASE_URL}/api/bookings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${customerToken}`,
+        },
+        body: JSON.stringify({
+          turfId: turf.id,
+          bookingDate: dateStr,
+          startTime: timeStr,
+          endTime,
+          isAdvanceOnly: true,
+          notes: JSON.stringify({ testRun: true, nonce: Math.random() }),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data?.id) {
+        return data;
+      }
     }
-    return data;
+    throw new Error('Failed to find unbooked slot after 25 attempts');
   }
 
   // -------------------------------------------------------------
@@ -105,7 +141,7 @@ async function runRegression() {
 
   // 1.2 Checkout response verification
   const hasExpectedFields = bkashInit?.amount > 0 && bkashInit?.currency === 'BDT' && Boolean(bkashInit?.expiresAt);
-  recordTest('bKash Flow', 'Checkout response schema', hasExpectedFields, `Amount: ৳${bkashInit?.amount} BDT, ExpiresAt: ${bkashInit?.expiresAt}`);
+  recordTest('bKash Flow', 'Checkout response schema', hasExpectedFields, `Amount: BDT ${bkashInit?.amount}, ExpiresAt: ${bkashInit?.expiresAt}`);
 
   // 1.3 Transaction verification & successful booking confirmation
   try {
@@ -125,7 +161,7 @@ async function runRegression() {
     // Verify DB update
     const [updatedBooking] = await db.select().from(bookings).where(eq(bookings.id, booking1.id));
     const isConfirmed = updatedBooking.bookingStatus === 'confirmed' && updatedBooking.advancePaid > 0;
-    recordTest('bKash Flow', 'Successful booking confirmation', isConfirmed, `Status: ${updatedBooking.bookingStatus}, AdvancePaid: ৳${updatedBooking.advancePaid}`);
+    recordTest('bKash Flow', 'Successful booking confirmation', isConfirmed, `Status: ${updatedBooking.bookingStatus}, AdvancePaid: BDT ${updatedBooking.advancePaid}`);
   } catch (err: any) {
     recordTest('bKash Flow', 'Transaction verification', false, undefined, err.message);
   }
@@ -191,7 +227,7 @@ async function runRegression() {
 
     const [dbB] = await db.select().from(bookings).where(eq(bookings.id, nagadBooking.id));
     const isStatusUpdated = dbB.bookingStatus === 'confirmed' && dbB.advancePaid > 0;
-    recordTest('Nagad Flow', 'Status update', isStatusUpdated, `Booking: ${dbB.bookingStatus}, Advance: ৳${dbB.advancePaid}`);
+    recordTest('Nagad Flow', 'Status update', isStatusUpdated, `Booking: ${dbB.bookingStatus}, Advance: BDT ${dbB.advancePaid}`);
   } catch (err: any) {
     recordTest('Nagad Flow', 'Nagad verification', false, undefined, err.message);
   }
@@ -259,7 +295,7 @@ async function runRegression() {
       }),
     });
     const validData = await validIpnRes.json();
-    const isIpnValid = validIpnRes.status === 200 && validData.status === 'IPN_RECEIVED_OK';
+    const isIpnValid = validIpnRes.status === 200 && (validData.status === 'IPN_SUCCESS' || validData.status === 'IPN_RECEIVED_OK');
 
     const invalidIpnRes = await fetch(`${BASE_URL}/api/payments/sslcommerz/ipn`, {
       method: 'POST',
@@ -325,7 +361,7 @@ async function runRegression() {
     });
     const tamperInit = await tamperInitRes.json();
 
-    // Try verifying with tampered amount (e.g. ৳50 instead of ৳1000)
+    // Try verifying with tampered amount (e.g. BDT 50 instead of BDT 1000)
     const tamperRes = await fetch(`${BASE_URL}/api/payments/verify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -482,7 +518,7 @@ async function runRegression() {
       'Booking Integration',
       'End-to-End Slot to Receipt Flow',
       completeIntegrationPassed,
-      `Booking #${confirmedB.bookingCode}, Advance ৳${confirmedB.advancePaid}, Due ৳${confirmedB.dueAmount}`
+      `Booking #${confirmedB.bookingCode}, Advance BDT ${confirmedB.advancePaid}, Due BDT ${confirmedB.dueAmount}`
     );
   } catch (err: any) {
     recordTest('Booking Integration', 'End-to-End Slot to Receipt Flow', false, undefined, err.message);
@@ -498,16 +534,16 @@ async function runRegression() {
     });
     const ownerData = await ownerRes.json();
     const hasSummary = typeof ownerData.summary?.totalGrossRevenue === 'number' && typeof ownerData.summary?.netPayoutOwed === 'number';
-    recordTest('Owner Flow', 'Revenue calculation', hasSummary, `Gross: ৳${ownerData.summary?.totalGrossRevenue}, Net Payout: ৳${ownerData.summary?.netPayoutOwed}`);
+    recordTest('Owner Flow', 'Revenue calculation', hasSummary, `Gross: BDT ${ownerData.summary?.totalGrossRevenue}, Net Payout: BDT ${ownerData.summary?.netPayoutOwed}`);
 
     const hasBreakdown = ownerData.gatewayBreakdown && typeof ownerData.gatewayBreakdown.bkash === 'number';
-    recordTest('Owner Flow', 'Gateway breakdown', Boolean(hasBreakdown), `bKash: ৳${ownerData.gatewayBreakdown?.bkash}, Nagad: ৳${ownerData.gatewayBreakdown?.nagad}, SSL: ৳${ownerData.gatewayBreakdown?.sslcommerz}`);
+    recordTest('Owner Flow', 'Gateway breakdown', Boolean(hasBreakdown), `bKash: BDT ${ownerData.gatewayBreakdown?.bkash}, Nagad: BDT ${ownerData.gatewayBreakdown?.nagad}, SSL: BDT ${ownerData.gatewayBreakdown?.sslcommerz}`);
 
     // Settlement calculation check: 5% platform commission and net payout
     const expectedCommission = Math.round(ownerData.summary.onlineAdvanceCollected * 0.05);
     const expectedNet = Math.max(0, ownerData.summary.onlineAdvanceCollected - expectedCommission);
     const isSettlementMathCorrect = ownerData.summary.platformCommission === expectedCommission && ownerData.summary.netPayoutOwed === expectedNet;
-    recordTest('Owner Flow', 'Settlement request calculation', isSettlementMathCorrect, `Commission: ৳${ownerData.summary.platformCommission}, Net Owed: ৳${ownerData.summary.netPayoutOwed}`);
+    recordTest('Owner Flow', 'Settlement request calculation', isSettlementMathCorrect, `Commission: BDT ${ownerData.summary.platformCommission}, Net Owed: BDT ${ownerData.summary.netPayoutOwed}`);
   } catch (err: any) {
     recordTest('Owner Flow', 'Revenue calculation', false, undefined, err.message);
   }
@@ -522,7 +558,7 @@ async function runRegression() {
     });
     const adminData = await adminRes.json();
     const hasKpis = adminData.kpis && typeof adminData.kpis.totalVolume === 'number' && typeof adminData.kpis.successfulCount === 'number';
-    recordTest('Admin Flow', 'Transaction monitoring', Boolean(hasKpis), `Total Volume: ৳${adminData.kpis?.totalVolume}, Transactions: ${adminData.kpis?.totalTransactions}`);
+    recordTest('Admin Flow', 'Transaction monitoring', Boolean(hasKpis), `Total Volume: BDT ${adminData.kpis?.totalVolume}, Transactions: ${adminData.kpis?.totalTransactions}`);
 
     const hasAuditLogs = Array.isArray(adminData.auditLogs) && adminData.auditLogs.length > 0;
     recordTest('Admin Flow', 'Payment audit logs', hasAuditLogs, `Audit logs count: ${adminData.auditLogs?.length}`);

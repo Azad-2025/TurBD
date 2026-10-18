@@ -91,6 +91,55 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 }
 
 /**
+ * optionalAuth middleware:
+ * Validates JWT Bearer token or HTTP-only access_token cookie if present,
+ * and attaches req.user from the database.
+ * If no token is provided or the token is invalid/expired, req.user remains undefined
+ * without throwing an authentication error or blocking guest traffic.
+ */
+export async function optionalAuth(req: Request, _res: Response, next: NextFunction) {
+  try {
+    let token: string | undefined;
+
+    // 1. Check Authorization header
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7).trim();
+    }
+
+    // 2. Check HTTP-only access_token cookie
+    if (!token && (req as any).cookies?.access_token) {
+      token = (req as any).cookies.access_token;
+    }
+
+    if (!token) {
+      return next();
+    }
+
+    let payload: TokenPayload;
+    try {
+      payload = verifyAccessToken(token);
+    } catch {
+      // Ephemeral guest or expired session - continue as guest
+      return next();
+    }
+
+    if (!payload || !payload.userId) {
+      return next();
+    }
+
+    const [dbUser] = await db.select().from(users).where(eq(users.id, payload.userId));
+    if (dbUser && !(dbUser.lockedUntil && new Date(dbUser.lockedUntil) > new Date())) {
+      req.user = dbUser;
+    }
+
+    return next();
+  } catch {
+    return next();
+  }
+}
+
+/**
  * requireOwner middleware:
  * Ensures the authenticated user has verified 'owner' or 'admin' role in the database.
  */
@@ -99,8 +148,20 @@ export async function requireOwner(req: Request, res: Response, next: NextFuncti
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required.' });
     }
-    if (req.user.role !== 'owner' && req.user.role !== 'admin') {
+    if (req.user.role === 'admin') {
+      return next();
+    }
+    if (req.user.role !== 'owner') {
       return res.status(403).json({ error: 'Forbidden: Turf Owner privileges required.' });
+    }
+    if (req.user.ownerVerificationStatus !== 'approved') {
+      return res.status(403).json({
+        error: `Forbidden: Owner account verification status is '${req.user.ownerVerificationStatus || 'pending'}'. Operational owner access requires approved status by platform administrator.`,
+        code: 'OWNER_NOT_APPROVED',
+        verificationStatus: req.user.ownerVerificationStatus || 'pending',
+        rejectionReason: req.user.ownerRejectionReason,
+        suspensionReason: req.user.ownerSuspensionReason,
+      });
     }
     return next();
   };
@@ -139,3 +200,34 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
 
   return checkRole();
 }
+
+/**
+ * requireSuperAdmin middleware:
+ * Strictly ensures the authenticated user is an authorized Super Admin (role === 'admin' and isSuperAdmin === true).
+ * Ordinary Admins, Owners, and Customers are rejected with 403 Forbidden.
+ * Protects administrative account creation, role promotions, and privilege elevation.
+ */
+export async function requireSuperAdmin(req: Request, res: Response, next: NextFunction) {
+  const checkRole = () => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required.', code: 'UNAUTHENTICATED' });
+    }
+    if (req.user.role !== 'admin' || !req.user.isSuperAdmin) {
+      return res.status(403).json({
+        error: 'Forbidden: Super Administrator authorization required to manage Admin roles.',
+        code: 'SUPER_ADMIN_REQUIRED',
+      });
+    }
+    return next();
+  };
+
+  if (!req.user) {
+    return requireAuth(req, res, (err) => {
+      if (err) return next(err);
+      return checkRole();
+    });
+  }
+
+  return checkRole();
+}
+

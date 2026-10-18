@@ -38,6 +38,7 @@ async function createAdmin() {
         .update(users)
         .set({
           role: 'admin',
+          isSuperAdmin: true,
           passwordHash,
           name,
           phone,
@@ -59,9 +60,10 @@ async function createAdmin() {
           email,
           passwordHash,
           role: 'admin',
+          isSuperAdmin: true,
           isEmailVerified: true,
           isPhoneVerified: true,
-          profileImage: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=200&q=80',
+          profileImage: null,
         })
         .returning();
 

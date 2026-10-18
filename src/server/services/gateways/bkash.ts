@@ -33,24 +33,34 @@ export class BkashGatewayService {
   private appKey: string;
   private appSecret: string;
   private username: string;
+  private password: string;
   private isSandbox: boolean;
 
-  // In-memory token cache for active session
+  // In-memory token cache and mutex for active session
   private cachedToken: string | null = null;
   private tokenExpiresAt: number = 0;
+  private tokenGrantPromise: Promise<string> | null = null;
 
   constructor() {
     this.isSandbox = process.env.BKASH_SANDBOX !== 'false';
     this.baseUrl = this.isSandbox
       ? 'https://tokenized.sandbox.bka.sh/v1.2.0-beta'
       : 'https://tokenized.pay.bka.sh/v1.2.0-beta';
-    this.appKey = process.env.BKASH_APP_KEY || 'sandbox_bkash_key_turfbd';
-    this.appSecret = process.env.BKASH_APP_SECRET || 'sandbox_bkash_secret_turfbd';
-    this.username = process.env.BKASH_USERNAME || 'sandbox_turfbd_merchant';
+    this.appKey = process.env.BKASH_APP_KEY || '';
+    this.appSecret = process.env.BKASH_APP_SECRET || '';
+    this.username = process.env.BKASH_USERNAME || '';
+    this.password = process.env.BKASH_PASSWORD || '';
   }
 
   /**
-   * Grant / Refresh merchant access token
+   * Has real merchant credentials configured
+   */
+  hasCredentials(): boolean {
+    return Boolean(this.appKey && this.appSecret && this.username);
+  }
+
+  /**
+   * Grant / Refresh merchant access token with concurrency lock
    */
   async grantToken(): Promise<string> {
     const now = Date.now();
@@ -58,40 +68,53 @@ export class BkashGatewayService {
       return this.cachedToken;
     }
 
-    try {
-      // In live or connected sandbox environment
-      if (process.env.BKASH_APP_KEY && process.env.BKASH_APP_SECRET) {
-        const response = await fetch(`${this.baseUrl}/tokenized/checkout/token/grant`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            username: this.username,
-            password: process.env.BKASH_PASSWORD || '',
-          },
-          body: JSON.stringify({
-            app_key: this.appKey,
-            app_secret: this.appSecret,
-          }),
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          if (data.id_token) {
-            this.cachedToken = data.id_token;
-            this.tokenExpiresAt = now + (data.expires_in ? data.expires_in * 1000 : 3500000);
-            return this.cachedToken;
-          }
-        }
-      }
-    } catch (err) {
-      console.warn('bKash live token grant fallback to sandbox simulation:', err);
+    if (this.tokenGrantPromise) {
+      return this.tokenGrantPromise;
     }
 
-    // Sandbox test mode resilient fallback token
-    const syntheticToken = `bkash_token_${crypto.randomBytes(16).toString('hex')}`;
-    this.cachedToken = syntheticToken;
-    this.tokenExpiresAt = now + 3600000;
-    return syntheticToken;
+    this.tokenGrantPromise = (async () => {
+      try {
+        if (this.hasCredentials()) {
+          const response = await fetch(`${this.baseUrl}/tokenized/checkout/token/grant`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              username: this.username,
+              password: this.password,
+            },
+            body: JSON.stringify({
+              app_key: this.appKey,
+              app_secret: this.appSecret,
+            }),
+          });
+
+          const data = await response.json();
+          if (response.ok && data.id_token) {
+            this.cachedToken = data.id_token;
+            this.tokenExpiresAt = now + (data.expires_in ? Number(data.expires_in) * 1000 : 3500000);
+            return this.cachedToken;
+          } else {
+            console.error('[bKash] Token grant failed:', data);
+            if (!this.isSandbox) {
+              throw new Error(data.statusMessage || 'bKash token grant failed');
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[bKash] Token grant error, falling back to sandbox simulator:', err);
+        if (!this.isSandbox) throw err;
+      } finally {
+        this.tokenGrantPromise = null;
+      }
+
+      // Sandbox test fallback token
+      const syntheticToken = `bkash_token_${crypto.randomBytes(16).toString('hex')}`;
+      this.cachedToken = syntheticToken;
+      this.tokenExpiresAt = now + 3600000;
+      return syntheticToken;
+    })();
+
+    return this.tokenGrantPromise;
   }
 
   /**
@@ -102,7 +125,7 @@ export class BkashGatewayService {
     const paymentID = `BK${Date.now()}${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
 
     try {
-      if (process.env.BKASH_APP_KEY && process.env.BKASH_APP_SECRET) {
+      if (this.hasCredentials()) {
         const res = await fetch(`${this.baseUrl}/tokenized/checkout/create`, {
           method: 'POST',
           headers: {
@@ -121,26 +144,30 @@ export class BkashGatewayService {
           }),
         });
 
-        if (res.ok) {
-          const data = await res.json();
-          if (data.paymentID && data.bkashURL) {
-            return {
-              paymentID: data.paymentID,
-              bkashURL: data.bkashURL,
-              createTime: data.createTime || new Date().toISOString(),
-              transactionStatus: 'Initiated',
-              amount: params.amount,
-              currency: 'BDT',
-              gateway: 'bkash',
-            };
+        const data = await res.json();
+        if (res.ok && data.paymentID && data.bkashURL) {
+          return {
+            paymentID: data.paymentID,
+            bkashURL: data.bkashURL,
+            createTime: data.createTime || new Date().toISOString(),
+            transactionStatus: 'Initiated',
+            amount: params.amount,
+            currency: 'BDT',
+            gateway: 'bkash',
+          };
+        } else {
+          console.error('[bKash] create payment returned non-success:', data);
+          if (!this.isSandbox) {
+            throw new Error(data.statusMessage || 'bKash create payment failed');
           }
         }
       }
     } catch (err) {
-      console.warn('bKash create payment fallback to sandbox checkout URL:', err);
+      console.warn('[bKash] create payment fallback to sandbox checkout URL:', err);
+      if (!this.isSandbox) throw err;
     }
 
-    // Sandbox checkout URL directing to interactive simulator or return URL
+    // Sandbox checkout URL directing to interactive simulator return URL
     const returnUrlWithParams = `${params.callbackUrl}?paymentID=${paymentID}&status=success&amount=${params.amount}`;
 
     return {
@@ -161,7 +188,7 @@ export class BkashGatewayService {
     const token = await this.grantToken();
 
     try {
-      if (process.env.BKASH_APP_KEY && process.env.BKASH_APP_SECRET) {
+      if (this.hasCredentials()) {
         const res = await fetch(`${this.baseUrl}/tokenized/checkout/execute`, {
           method: 'POST',
           headers: {
@@ -172,24 +199,28 @@ export class BkashGatewayService {
           body: JSON.stringify({ paymentID }),
         });
 
-        if (res.ok) {
-          const data = await res.json();
-          if (data.transactionStatus === 'Completed') {
-            return {
-              paymentID: data.paymentID,
-              trxID: data.trxID,
-              transactionStatus: 'Completed',
-              amount: Number(data.amount),
-              currency: data.currency || 'BDT',
-              customerMsisdn: data.customerMsisdn || '01711234567',
-              paymentExecuteTime: data.paymentExecuteTime || new Date().toISOString(),
-              gateway: 'bkash',
-            };
+        const data = await res.json();
+        if (res.ok && (data.transactionStatus === 'Completed' || data.statusCode === '0000')) {
+          return {
+            paymentID: data.paymentID || paymentID,
+            trxID: data.trxID,
+            transactionStatus: 'Completed',
+            amount: Number(data.amount),
+            currency: data.currency || 'BDT',
+            customerMsisdn: data.customerMsisdn || '01711234567',
+            paymentExecuteTime: data.paymentExecuteTime || new Date().toISOString(),
+            gateway: 'bkash',
+          };
+        } else {
+          console.error('[bKash] Execute payment failed with status:', data);
+          if (!this.isSandbox) {
+            throw new Error(data.statusMessage || 'bKash execution failed');
           }
         }
       }
     } catch (err) {
-      console.warn('bKash live execute fallback to verified sandbox response:', err);
+      console.warn('[bKash] Execute payment error:', err);
+      if (!this.isSandbox) throw err;
     }
 
     // Sandbox execution verification

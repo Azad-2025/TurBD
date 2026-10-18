@@ -62,6 +62,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
     createBooking,
     setActiveTab,
     refreshBookings,
+    realtimeConnected,
+    slotUpdateCounter,
+    blockedSlots,
   } = useApp();
 
   // Booking Flow Steps: 'slots' -> 'summary' -> 'payment' -> 'success'
@@ -89,16 +92,17 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
   const [lastSyncTime, setLastSyncTime] = useState<Date>(new Date());
 
   // Player Contact Details
-  const [playerName, setPlayerName] = useState(currentUser?.name || 'Tanvir Ahmed');
-  const [playerPhone, setPlayerPhone] = useState(currentUser?.phone || '+880 1711-234567');
-  const [playerEmail, setPlayerEmail] = useState(currentUser?.email || 'tanvir@turfbd.com');
+  const [playerName, setPlayerName] = useState(currentUser?.name || '');
+  const [playerPhone, setPlayerPhone] = useState(currentUser?.phone || '');
+  const [playerEmail, setPlayerEmail] = useState(currentUser?.email || '');
   const [teamNotes, setTeamNotes] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Payment Setup
   const [paymentType, setPaymentType] = useState<PaymentType>('advance');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('bkash');
-  const [bkashNumber, setBkashNumber] = useState('01711234567');
-  const [bkashPin, setBkashPin] = useState('12345');
+  const [bkashNumber, setBkashNumber] = useState('');
+  const [bkashPin, setBkashPin] = useState('');
   const [customTrxId, setCustomTrxId] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [confirmedBookingData, setConfirmedBookingData] = useState<any>(null);
@@ -115,15 +119,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
   } | null>(null);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
 
-  // Fetch real slot availability from PostgreSQL API whenever turf or selected date changes
+  // Fetch real slot availability from PostgreSQL API
   const fetchSlotAvailability = useCallback(async () => {
     setIsLoadingSlots(true);
     try {
-      const response = await fetch(`/api/slots?turfId=${turf.id}&date=${selectedDate}`);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch slots: ${response.status}`);
-      }
-      const data = await response.json();
+      const res = await fetch(`/api/slots?turfId=${turf.id}&date=${selectedDate}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
       if (Array.isArray(data)) {
         const map: Record<string, string> = {};
         data.forEach((slot: any) => {
@@ -134,8 +136,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
         setSlotsMap(map);
       }
       setLastSyncTime(new Date());
-    } catch (error) {
-      console.error('Error fetching real slot availability:', error);
+    } catch (err: any) {
+      console.error('Error fetching real slot availability:', err);
     } finally {
       setIsLoadingSlots(false);
     }
@@ -144,15 +146,40 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
   useEffect(() => {
     setSelectedSlots([]);
     fetchSlotAvailability();
-  }, [turf.id, selectedDate, fetchSlotAvailability]);
+  }, [fetchSlotAvailability, slotUpdateCounter]);
 
-  // Determine slot status: Available, Booked, Blocked, Maintenance
-  const getSlotStatus = (start: string): 'available' | 'booked' | 'blocked' | 'maintenance' => {
+  // Determine slot status: Available, Booked, Blocked, Maintenance, Held
+  const getSlotStatus = (start: string): 'available' | 'booked' | 'blocked' | 'maintenance' | 'held' => {
+    const key = `${turf.id}_${selectedDate}_${start}`;
+    if (blockedSlots[key]) {
+      return 'blocked';
+    }
     const rawStatus = slotsMap[start]?.toLowerCase();
     if (rawStatus === 'booked') return 'booked';
     if (rawStatus === 'blocked') return 'blocked';
     if (rawStatus === 'maintenance') return 'maintenance';
+    if (rawStatus === 'held') return 'held';
     return 'available';
+  };
+
+  // Ensure selectedSlots do not contain newly blocked or booked slots
+  useEffect(() => {
+    if (selectedSlots.length > 0) {
+      const invalidSlots = selectedSlots.filter((slot) => getSlotStatus(slot) !== 'available');
+      if (invalidSlots.length > 0) {
+        setSelectedSlots((prev) => prev.filter((s) => !invalidSlots.includes(s)));
+      }
+    }
+  }, [slotsMap, blockedSlots]);
+
+  // Release any held slots if user closes modal without completing checkout
+  const handleClose = () => {
+    if (step !== 'success' && selectedSlots.length > 0) {
+      selectedSlots.forEach((s) => {
+        api.releaseSlot(turf.id, selectedDate, s).catch(() => {});
+      });
+    }
+    onClose();
   };
 
   const handleSlotToggle = (start: string) => {
@@ -184,21 +211,28 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
   // Average price per hour for summary display
   const averageHourlyPrice = durationHours > 0 ? Math.round(totalAmount / durationHours) : turf.hourlyRate;
 
-  // Advance calculation: fixed ৳1,000 or 30%
+  // Advance calculation: fixed BDT 1,000 or 30%
   const advanceAmount = Math.min(1000 * Math.max(1, durationHours), totalAmount);
   const finalPayAmount = paymentType === 'full' ? totalAmount : advanceAmount;
   const dueAmount = totalAmount - finalPayAmount;
 
-  const handleProceedToSummary = () => {
+  const handleProceedToSummary = async () => {
     if (selectedSlots.length === 0) return;
+    // Hold each selected slot during checkout to prevent double-booking
+    for (const s of selectedSlots) {
+      await api.holdSlot(turf.id, selectedDate, s).catch((err) => {
+        console.warn('Could not lock slot for checkout:', err);
+      });
+    }
     setStep('summary');
   };
 
   const handleProceedToPayment = () => {
-    if (!playerName || !playerPhone) {
-      alert('Please provide your name and contact phone number.');
+    if (!playerName.trim() || !playerPhone.trim()) {
+      setFormError('Please provide your name and contact phone number.');
       return;
     }
+    setFormError(null);
     setStep('payment');
   };
 
@@ -317,28 +351,28 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
     }
 
     return (
-      <div className="bg-neutral-850 p-4 rounded-2xl border border-neutral-700 shadow-xl mb-4 space-y-3">
+      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-card mb-4 space-y-3">
         <div className="flex items-center justify-between">
           <button
             type="button"
             disabled={calendarMonthOffset <= 0}
             onClick={() => setCalendarMonthOffset((prev) => Math.max(0, prev - 1))}
-            className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 disabled:opacity-30 disabled:cursor-not-allowed"
+            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
-          <span className="text-xs font-bold text-white uppercase tracking-wider">{monthName}</span>
+          <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider">{monthName}</span>
           <button
             type="button"
             disabled={calendarMonthOffset >= 2}
             onClick={() => setCalendarMonthOffset((prev) => Math.min(2, prev + 1))}
-            className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 disabled:opacity-30 disabled:cursor-not-allowed"
+            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
           >
             <ChevronRight className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-neutral-500">
+        <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-slate-500">
           <span>Su</span>
           <span>Mo</span>
           <span>Tu</span>
@@ -362,14 +396,14 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
                   setSelectedDate(item.dateStr);
                   setShowFullCalendar(false);
                 }}
-                className={`h-8 rounded-lg text-xs font-semibold flex items-center justify-center transition-all ${
+                className={`h-8 rounded-lg text-xs font-semibold flex items-center justify-center transition-all cursor-pointer ${
                   item.isSelected
-                    ? 'bg-emerald-500 text-neutral-950 font-bold shadow-md shadow-emerald-500/30'
+                    ? 'bg-[#0FA958] text-white font-bold shadow-md shadow-emerald-600/20'
                     : item.isPast
-                    ? 'text-neutral-600 cursor-not-allowed'
+                    ? 'text-slate-300 cursor-not-allowed'
                     : item.isToday
-                    ? 'bg-neutral-800 text-emerald-400 border border-emerald-500/40 hover:bg-neutral-750'
-                    : 'text-neutral-300 hover:bg-neutral-800 hover:text-white'
+                    ? 'bg-emerald-50 text-[#064E3B] border border-[#0FA958] hover:bg-emerald-100'
+                    : 'text-slate-700 hover:bg-slate-200 hover:text-slate-900'
                 }`}
               >
                 {item.dayNumber}
@@ -383,15 +417,18 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-6 bg-black/85 backdrop-blur-md overflow-y-auto print:p-0 print:bg-white print:static"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 md:p-6 bg-slate-900/60 backdrop-blur-sm overflow-y-auto print:p-0 print:bg-white print:static"
       id="booking-modal"
     >
-      <div className="relative w-full max-w-2xl bg-neutral-900 border border-neutral-800 rounded-3xl overflow-hidden shadow-2xl my-auto print:border-none print:shadow-none print:w-full print:max-w-none print:text-black">
+      <div className="relative w-full max-w-2xl bg-white border-t sm:border border-slate-200 rounded-t-3xl sm:rounded-3xl max-h-[92vh] sm:max-h-[90vh] flex flex-col overflow-hidden shadow-2xl my-0 sm:my-auto text-[#0F172A] print:border-none print:shadow-none print:w-full print:max-w-none print:text-black">
+        {/* Mobile Swipe / Grab Handle */}
+        <div className="w-12 h-1 bg-slate-200 rounded-full mx-auto my-2 sm:hidden shrink-0" />
+
         {/* Modal Header */}
-        <div className="p-5 sm:p-6 border-b border-neutral-800 flex items-center justify-between bg-neutral-900/95 print:hidden">
+        <div className="p-4 sm:p-6 border-b border-slate-200 flex items-center justify-between bg-white print:hidden">
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">
+              <span className="text-xs font-bold text-[#0FA958] uppercase tracking-wider">
                 {step === 'slots'
                   ? 'Step 1 of 3: Select Date & Slots'
                   : step === 'summary'
@@ -400,15 +437,22 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
                   ? 'Step 3 of 3: Payment Checkout'
                   : 'Booking Confirmed'}
               </span>
+              {realtimeConnected && (
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[10px] font-semibold text-[#064E3B]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#0FA958] animate-ping" />
+                  <span>Live Sync</span>
+                </span>
+              )}
             </div>
-            <h2 className="text-lg sm:text-xl font-black text-white">{turf.name}</h2>
-            <p className="text-xs text-neutral-400">{turf.area}, {turf.city} • Rate: ৳{turf.hourlyRate}/hr</p>
+            <h2 className="text-base sm:text-xl font-black text-[#0F172A]">{turf.name}</h2>
+            <p className="text-xs text-[#64748B]">{turf.area}, {turf.city} • Rate: BDT {turf.hourlyRate}/hr</p>
           </div>
 
           <button
-            onClick={onClose}
-            className="p-2 text-neutral-400 hover:text-white rounded-full hover:bg-neutral-800 transition-colors cursor-pointer"
+            onClick={handleClose}
+            className="p-2 text-slate-400 hover:text-slate-700 rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
             id="booking-close-btn"
+            aria-label="Close booking modal"
           >
             <X className="w-5 h-5" />
           </button>
@@ -420,15 +464,15 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
             {/* 1. Date Selector with Modern Calendar View */}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-bold uppercase tracking-wider text-neutral-400 flex items-center gap-1.5">
-                  <CalendarDays className="w-3.5 h-3.5 text-emerald-400" />
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                  <CalendarDays className="w-3.5 h-3.5 text-[#0FA958]" />
                   <span>1. Choose Match Date</span>
                 </label>
 
                 <button
                   type="button"
                   onClick={() => setShowFullCalendar(!showFullCalendar)}
-                  className="text-xs font-semibold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 transition-colors cursor-pointer"
+                  className="text-xs font-semibold text-[#0FA958] hover:text-[#064E3B] flex items-center gap-1 transition-colors cursor-pointer"
                 >
                   <Calendar className="w-3.5 h-3.5" />
                   <span>{showFullCalendar ? 'Hide Calendar' : 'Full Month Calendar'}</span>
@@ -438,7 +482,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
               {showFullCalendar && renderCalendarMonth()}
 
               {/* Horizontal Scrollable/Pill Date Bar */}
-              <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-neutral-700">
+              <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-thin">
                 {dateOptions.map((opt) => (
                   <button
                     key={opt.dateStr}
@@ -449,8 +493,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
                     }}
                     className={`px-3.5 py-2.5 rounded-xl border text-center transition-all shrink-0 cursor-pointer min-w-[76px] ${
                       selectedDate === opt.dateStr
-                        ? 'bg-emerald-500 text-neutral-950 border-emerald-400 font-bold shadow-lg shadow-emerald-500/20 scale-102'
-                        : 'bg-neutral-850 text-neutral-300 border-neutral-800 hover:bg-neutral-800 hover:border-neutral-700'
+                        ? 'bg-[#0FA958] text-white border-[#0FA958] font-bold shadow-md shadow-emerald-600/20'
+                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100 hover:border-slate-300'
                     }`}
                   >
                     <div className="text-[10px] font-bold uppercase tracking-wider">{opt.dayName}</div>
@@ -462,7 +506,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
 
             {/* 2. Sport Type Choice */}
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-neutral-400 mb-2">
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
                 2. Select Sport Type
               </label>
               <div className="flex flex-wrap gap-2">
@@ -473,8 +517,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
                     onClick={() => setSport(sp)}
                     className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
                       sport === sp
-                        ? 'bg-neutral-800 text-emerald-400 border border-emerald-500/60 shadow-sm'
-                        : 'bg-neutral-850 text-neutral-400 border border-neutral-800 hover:text-white'
+                        ? 'bg-emerald-50 text-[#064E3B] border border-emerald-300 shadow-2xs'
+                        : 'bg-slate-50 text-slate-600 border border-slate-200 hover:text-slate-900 hover:bg-slate-100'
                     }`}
                   >
                     <span>{sp === 'football' ? '⚽ Football' : sp === 'cricket' ? '🏏 Cricket' : sp === 'badminton' ? '🏸 Badminton' : '🥅 Futsal'}</span>
@@ -486,37 +530,40 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
             {/* 3. Slot Availability Matrix & Clear States */}
             <div>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
-                <label className="text-xs font-bold uppercase tracking-wider text-neutral-400 flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 text-emerald-400" />
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-[#0FA958]" />
                   <span>3. Hourly Pitch Slots</span>
                 </label>
 
                 {/* State Legend & Real-Time Sync Indicator */}
-                <div className="flex items-center gap-2 text-[10px] text-neutral-400 flex-wrap">
+                <div className="flex items-center gap-2 text-[10px] text-slate-500 flex-wrap">
                   <button
                     type="button"
                     onClick={() => fetchSlotAvailability()}
                     disabled={isLoadingSlots}
-                    className="text-[10px] text-neutral-400 hover:text-emerald-400 flex items-center gap-1 bg-neutral-800 px-2 py-0.5 rounded-md transition-colors mr-1 cursor-pointer"
+                    className="text-[10px] text-slate-600 hover:text-[#064E3B] flex items-center gap-1 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-2 py-0.5 rounded-md transition-colors mr-1 cursor-pointer"
                     title="Real-time sync with PostgreSQL database"
                   >
-                    <RefreshCw className={`w-3 h-3 ${isLoadingSlots ? 'animate-spin text-emerald-400' : ''}`} />
+                    <RefreshCw className={`w-3 h-3 ${isLoadingSlots ? 'animate-spin text-[#0FA958]' : ''}`} />
                     <span>{isLoadingSlots ? 'Syncing...' : 'Sync Live'}</span>
                   </button>
                   <span className="flex items-center gap-1">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span> Available
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#0FA958] inline-block"></span> Available
                   </span>
                   <span className="flex items-center gap-1">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-emerald-300 inline-block"></span> Selected
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 ring-2 ring-emerald-300 inline-block"></span> Selected
                   </span>
                   <span className="flex items-center gap-1">
-                    <span className="w-2.5 h-2.5 rounded-full bg-neutral-700 inline-block"></span> Booked
+                    <span className="w-2.5 h-2.5 rounded-full bg-slate-300 inline-block"></span> Booked
                   </span>
                   <span className="flex items-center gap-1">
-                    <span className="w-2.5 h-2.5 rounded-full bg-amber-600 inline-block"></span> Blocked
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span> Blocked
                   </span>
                   <span className="flex items-center gap-1">
-                    <span className="w-2.5 h-2.5 rounded-full bg-orange-600 inline-block"></span> Maintenance
+                    <span className="w-2.5 h-2.5 rounded-full bg-purple-500 inline-block"></span> Held
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded-full bg-orange-500 inline-block"></span> Maintenance
                   </span>
                 </div>
               </div>
@@ -526,10 +573,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
                 const categorySlots = ALL_HOURLY_SLOTS.filter((s) => s.category === category);
                 return (
                   <div key={category} className="mb-4">
-                    <div className="text-[11px] font-bold text-neutral-400 mb-1.5 flex items-center gap-1">
+                    <div className="text-[11px] font-bold text-slate-600 mb-1.5 flex items-center gap-1">
                       <span>{category}</span>
                       {category.includes('Lights') && (
-                        <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 rounded font-mono">
+                        <span className="text-[9px] bg-amber-100 text-amber-800 border border-amber-200 px-1.5 rounded font-mono font-medium">
                           Popular Prime Time
                         </span>
                       )}
@@ -541,6 +588,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
                         const isBooked = status === 'booked';
                         const isBlocked = status === 'blocked';
                         const isMaintenance = status === 'maintenance';
+                        const isHeld = status === 'held';
                         const selected = selectedSlots.includes(slot.start);
                         const price = slot.isPeak && turf.peakHourRate ? turf.peakHourRate : turf.hourlyRate;
 
@@ -552,34 +600,39 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
                             onClick={() => handleSlotToggle(slot.start)}
                             className={`p-2.5 rounded-xl border text-left transition-all relative ${
                               isBooked
-                                ? 'bg-neutral-900/60 border-neutral-800/80 text-neutral-600 cursor-not-allowed line-through'
+                                ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed line-through'
                                 : isBlocked
-                                ? 'bg-amber-950/20 border-amber-900/40 text-amber-500 cursor-not-allowed'
+                                ? 'bg-amber-50 border-amber-200 text-amber-700 cursor-not-allowed'
+                                : isHeld
+                                ? 'bg-purple-50 border-purple-200 text-purple-700 cursor-not-allowed'
                                 : isMaintenance
-                                ? 'bg-orange-950/25 border-orange-900/40 text-orange-400 cursor-not-allowed'
+                                ? 'bg-orange-50 border-orange-200 text-orange-700 cursor-not-allowed'
                                 : selected
-                                ? 'bg-emerald-500 text-neutral-950 border-emerald-400 font-bold shadow-md shadow-emerald-500/25 ring-2 ring-emerald-400'
-                                : 'bg-neutral-850 border-neutral-800 text-neutral-200 hover:border-emerald-500/50 hover:bg-neutral-800 cursor-pointer'
+                                ? 'bg-[#0FA958] text-white border-[#0FA958] font-bold shadow-md shadow-emerald-600/25 ring-2 ring-emerald-400'
+                                : 'bg-white border-slate-200 text-[#0F172A] hover:border-[#0FA958] hover:bg-emerald-50/40 cursor-pointer shadow-2xs'
                             }`}
                           >
                             <div className="text-xs font-bold flex items-center justify-between">
                               <span>{slot.start} - {slot.end}</span>
                               {selected && <span>✓</span>}
+                              {isHeld && <span className="text-[9px] text-purple-600 font-normal">Held</span>}
                             </div>
                             <div className={`text-[10px] font-mono mt-0.5 flex items-center justify-between ${
-                              selected ? 'text-neutral-950 font-semibold' : 'text-neutral-400'
+                              selected ? 'text-white font-semibold' : 'text-[#64748B]'
                             }`}>
                               <span>
                                 {isBooked
                                   ? 'Booked'
                                   : isBlocked
                                   ? 'Blocked'
+                                  : isHeld
+                                  ? 'In Checkout'
                                   : isMaintenance
                                   ? 'Maintenance'
-                                  : `৳${price}`}
+                                  : `BDT ${price}`}
                               </span>
                               {isAvailable && !selected && (
-                                <span className="text-[9px] text-emerald-400">Available</span>
+                                <span className="text-[9px] text-[#0FA958] font-semibold">Available</span>
                               )}
                             </div>
                           </button>
@@ -596,67 +649,74 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
         {/* STEP 2: BOOKING SUMMARY BEFORE CONFIRMATION & CONTACT DETAILS */}
         {step === 'summary' && (
           <div className="p-5 sm:p-6 space-y-5 max-h-[70vh] overflow-y-auto">
+            {formError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
+                <span>{formError}</span>
+              </div>
+            )}
+
             {/* Dedicated Booking Summary Card */}
-            <div className="bg-neutral-850 rounded-2xl border border-emerald-500/30 overflow-hidden shadow-lg">
-              <div className="bg-emerald-950/40 px-4 py-3 border-b border-emerald-500/20 flex items-center justify-between">
-                <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
-                  <ShieldCheck className="w-4 h-4" />
+            <div className="bg-slate-50 rounded-2xl border border-emerald-200 overflow-hidden shadow-card">
+              <div className="bg-emerald-50 px-4 py-3 border-b border-emerald-200 flex items-center justify-between">
+                <span className="text-xs font-bold text-[#064E3B] uppercase tracking-wider flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-[#0FA958]" />
                   <span>Match Booking Summary</span>
                 </span>
-                <span className="text-xs font-mono font-bold text-neutral-300">
+                <span className="text-xs font-mono font-bold text-slate-700">
                   {durationHours} Hour{durationHours > 1 ? 's' : ''} Pitch Lock
                 </span>
               </div>
 
               <div className="p-4 sm:p-5 space-y-3 text-xs">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-3 border-b border-neutral-800">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-3 border-b border-slate-200">
                   <div>
-                    <span className="text-[10px] uppercase font-bold text-neutral-400 block">Turf Name</span>
-                    <span className="text-sm font-bold text-white">{turf.name}</span>
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block">Turf Name</span>
+                    <span className="text-sm font-bold text-[#0F172A]">{turf.name}</span>
                   </div>
                   <div>
-                    <span className="text-[10px] uppercase font-bold text-neutral-400 block">Location</span>
-                    <span className="text-xs font-semibold text-neutral-200 flex items-center gap-1">
-                      <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block">Location</span>
+                    <span className="text-xs font-semibold text-slate-700 flex items-center gap-1">
+                      <MapPin className="w-3.5 h-3.5 text-[#0FA958] shrink-0" />
                       <span>{turf.address}, {turf.area}, {turf.city}</span>
                     </span>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pb-3 border-b border-neutral-800">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pb-3 border-b border-slate-200">
                   <div>
-                    <span className="text-[10px] uppercase font-bold text-neutral-400 block">Date</span>
-                    <span className="text-xs font-bold text-white">{selectedDate}</span>
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block">Date</span>
+                    <span className="text-xs font-bold text-[#0F172A]">{selectedDate}</span>
                   </div>
                   <div>
-                    <span className="text-[10px] uppercase font-bold text-neutral-400 block">Time</span>
-                    <span className="text-xs font-mono font-bold text-emerald-400">
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block">Time</span>
+                    <span className="text-xs font-mono font-bold text-[#064E3B]">
                       {earliestSlot} - {latestSlotEnd}
                     </span>
                   </div>
                   <div>
-                    <span className="text-[10px] uppercase font-bold text-neutral-400 block">Duration</span>
-                    <span className="text-xs font-bold text-white">{durationHours} Hour{durationHours > 1 ? 's' : ''}</span>
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block">Duration</span>
+                    <span className="text-xs font-bold text-[#0F172A]">{durationHours} Hour{durationHours > 1 ? 's' : ''}</span>
                   </div>
                   <div>
-                    <span className="text-[10px] uppercase font-bold text-neutral-400 block">Price Per Hour</span>
-                    <span className="text-xs font-mono font-bold text-white">৳{averageHourlyPrice} / hr</span>
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block">Price Per Hour</span>
+                    <span className="text-xs font-mono font-bold text-[#0F172A]">BDT {averageHourlyPrice} / hr</span>
                   </div>
                 </div>
 
                 {/* Financial Summary */}
                 <div className="space-y-1.5 pt-1">
-                  <div className="flex justify-between text-neutral-300">
+                  <div className="flex justify-between text-slate-700">
                     <span>Total Pitch Fee ({durationHours} hr{durationHours > 1 ? 's' : ''}):</span>
-                    <span className="font-mono font-bold text-white">৳{totalAmount.toLocaleString()}</span>
+                    <span className="font-mono font-bold text-[#0F172A]">BDT {totalAmount.toLocaleString()}</span>
                   </div>
-                  <div className="flex justify-between text-emerald-400 font-semibold">
+                  <div className="flex justify-between text-[#064E3B] font-semibold">
                     <span>Advance Amount (Token to lock pitch):</span>
-                    <span className="font-mono">৳{advanceAmount.toLocaleString()}</span>
+                    <span className="font-mono font-bold text-[#0FA958]">BDT {advanceAmount.toLocaleString()}</span>
                   </div>
-                  <div className="flex justify-between text-amber-400 font-semibold">
+                  <div className="flex justify-between text-amber-700 font-semibold">
                     <span>Remaining Due Amount (Payable at venue):</span>
-                    <span className="font-mono">৳{dueAmount.toLocaleString()}</span>
+                    <span className="font-mono">BDT {dueAmount.toLocaleString()}</span>
                   </div>
                 </div>
               </div>
@@ -664,59 +724,59 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
 
             {/* Player Details Form */}
             <div className="space-y-3">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-300">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600">
                 Player / Team Captain Details
               </h4>
 
               <div>
-                <label className="block text-xs font-semibold text-neutral-300 mb-1">Booker Full Name</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Booker Full Name</label>
                 <div className="relative">
-                  <UserIcon className="absolute left-3 top-2.5 w-4 h-4 text-neutral-500" />
+                  <UserIcon className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
                   <input
                     type="text"
                     value={playerName}
                     onChange={(e) => setPlayerName(e.target.value)}
                     placeholder="e.g. Tanvir Ahmed"
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-xl py-2 pl-9 pr-3 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500"
+                    className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-9 pr-3 text-xs text-[#0F172A] placeholder-slate-400 focus:outline-none focus:border-[#0FA958] focus:ring-1 focus:ring-[#0FA958]"
                     required
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-neutral-300 mb-1">Contact Phone Number (bKash & SMS)</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Contact Phone Number (bKash & SMS)</label>
                 <div className="relative">
-                  <Phone className="absolute left-3 top-2.5 w-4 h-4 text-neutral-500" />
+                  <Phone className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
                   <input
                     type="tel"
                     value={playerPhone}
                     onChange={(e) => setPlayerPhone(e.target.value)}
                     placeholder="+880 1711-234567"
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-xl py-2 pl-9 pr-3 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500"
+                    className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-9 pr-3 text-xs text-[#0F172A] placeholder-slate-400 focus:outline-none focus:border-[#0FA958] focus:ring-1 focus:ring-[#0FA958]"
                     required
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-neutral-300 mb-1">Email Address (for Booking Voucher)</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Email Address (for Booking Voucher)</label>
                 <input
                   type="email"
                   value={playerEmail}
                   onChange={(e) => setPlayerEmail(e.target.value)}
                   placeholder="tanvir@turfbd.com"
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-xl py-2 px-3 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500"
+                  className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs text-[#0F172A] placeholder-slate-400 focus:outline-none focus:border-[#0FA958] focus:ring-1 focus:ring-[#0FA958]"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-neutral-300 mb-1">Match Requests / Notes (Optional)</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Match Requests / Notes (Optional)</label>
                 <textarea
                   value={teamNotes}
                   onChange={(e) => setTeamNotes(e.target.value)}
                   placeholder="e.g. Need 10 bibs (5 red, 5 blue), 2 match balls, referee..."
                   rows={2}
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-xl p-2.5 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500 resize-none"
+                  className="w-full bg-white border border-slate-200 rounded-xl p-2.5 text-xs text-[#0F172A] placeholder-slate-400 focus:outline-none focus:border-[#0FA958] focus:ring-1 focus:ring-[#0FA958] resize-none"
                 />
               </div>
             </div>
@@ -727,76 +787,76 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
         {step === 'payment' && (
           <div className="p-5 sm:p-6 space-y-5 max-h-[70vh] overflow-y-auto">
             {/* Amount Breakdown */}
-            <div className="bg-neutral-850 p-4 rounded-2xl border border-neutral-800 space-y-2">
-              <div className="flex justify-between text-xs text-neutral-300">
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2">
+              <div className="flex justify-between text-xs text-slate-600">
                 <span>Total Pitch Fee ({durationHours} hr{durationHours > 1 ? 's' : ''}):</span>
-                <span className="font-mono font-bold text-white">৳{totalAmount.toLocaleString()}</span>
+                <span className="font-mono font-bold text-[#0F172A]">BDT {totalAmount.toLocaleString()}</span>
               </div>
-              <div className="flex justify-between text-xs text-neutral-300">
+              <div className="flex justify-between text-xs text-slate-600">
                 <span>Platform Service Charge:</span>
-                <span className="text-emerald-400 font-bold">FREE (0%)</span>
+                <span className="text-[#0FA958] font-bold">FREE (0%)</span>
               </div>
-              <div className="border-t border-neutral-800 pt-2 flex justify-between items-baseline">
-                <span className="text-xs font-bold text-neutral-200">Amount Due Now:</span>
-                <span className="text-xl font-black text-emerald-400 font-mono">৳{finalPayAmount.toLocaleString()}</span>
+              <div className="border-t border-slate-200 pt-2 flex justify-between items-baseline">
+                <span className="text-xs font-bold text-[#0F172A]">Amount Due Now:</span>
+                <span className="text-xl font-black text-[#064E3B] font-mono">BDT {finalPayAmount.toLocaleString()}</span>
               </div>
               {dueAmount > 0 && (
-                <div className="text-[11px] text-amber-400 flex items-center gap-1 pt-1">
-                  <AlertCircle className="w-3 h-3" />
-                  <span>Remaining ৳{dueAmount.toLocaleString()} payable in cash or mobile money at field reception.</span>
+                <div className="text-[11px] text-amber-700 flex items-center gap-1 pt-1 font-medium">
+                  <AlertCircle className="w-3 h-3 text-amber-600" />
+                  <span>Remaining BDT {dueAmount.toLocaleString()} payable in cash or mobile money at field reception.</span>
                 </div>
               )}
             </div>
 
             {/* Payment Type: Advance Token vs Full */}
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-neutral-400 mb-2">
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
                 1. Choose Payment Option
               </label>
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
                   onClick={() => setPaymentType('advance')}
-                  className={`p-3 rounded-2xl border text-left transition-all ${
+                  className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
                     paymentType === 'advance'
-                      ? 'bg-emerald-500/15 border-emerald-500 text-emerald-400'
-                      : 'bg-neutral-850 border-neutral-800 text-neutral-300 hover:bg-neutral-800'
+                      ? 'bg-emerald-50 border-2 border-[#0FA958] text-[#064E3B] shadow-2xs'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
                   }`}
                 >
                   <div className="text-xs font-bold">Pay Advance Token</div>
-                  <div className="text-sm font-black font-mono mt-0.5">৳{advanceAmount.toLocaleString()}</div>
-                  <div className="text-[10px] text-neutral-400 mt-1">Pay remaining on arrival</div>
+                  <div className="text-sm font-black font-mono mt-0.5 text-[#064E3B]">BDT {advanceAmount.toLocaleString()}</div>
+                  <div className="text-[10px] text-slate-500 mt-1">Pay remaining on arrival</div>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setPaymentType('full')}
-                  className={`p-3 rounded-2xl border text-left transition-all ${
+                  className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
                     paymentType === 'full'
-                      ? 'bg-emerald-500/15 border-emerald-500 text-emerald-400'
-                      : 'bg-neutral-850 border-neutral-800 text-neutral-300 hover:bg-neutral-800'
+                      ? 'bg-emerald-50 border-2 border-[#0FA958] text-[#064E3B] shadow-2xs'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
                   }`}
                 >
                   <div className="text-xs font-bold">Pay Full Pitch Fee</div>
-                  <div className="text-sm font-black font-mono mt-0.5">৳{totalAmount.toLocaleString()}</div>
-                  <div className="text-[10px] text-neutral-400 mt-1">100% paid, seamless check-in</div>
+                  <div className="text-sm font-black font-mono mt-0.5 text-[#064E3B]">BDT {totalAmount.toLocaleString()}</div>
+                  <div className="text-[10px] text-slate-500 mt-1">100% paid, seamless check-in</div>
                 </button>
               </div>
             </div>
 
             {/* Payment Method Selector */}
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-neutral-400 mb-2">
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
                 2. Select Payment Gateway
               </label>
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('bkash')}
-                  className={`p-2.5 rounded-xl border flex flex-col items-center gap-1 transition-all ${
+                  className={`p-2.5 rounded-xl border flex flex-col items-center gap-1 transition-all cursor-pointer ${
                     paymentMethod === 'bkash'
-                      ? 'bg-pink-950/40 border-pink-500 text-pink-400 font-bold ring-2 ring-pink-500'
-                      : 'bg-neutral-850 border-neutral-800 text-neutral-400 hover:bg-neutral-800'
+                      ? 'bg-pink-50 border-pink-500 text-pink-700 font-bold ring-2 ring-pink-500/30'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                   }`}
                 >
                   <span className="text-base font-black">🌸 bKash</span>
@@ -806,10 +866,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('nagad')}
-                  className={`p-2.5 rounded-xl border flex flex-col items-center gap-1 transition-all ${
+                  className={`p-2.5 rounded-xl border flex flex-col items-center gap-1 transition-all cursor-pointer ${
                     paymentMethod === 'nagad'
-                      ? 'bg-orange-950/40 border-orange-500 text-orange-400 font-bold ring-2 ring-orange-500'
-                      : 'bg-neutral-850 border-neutral-800 text-neutral-400 hover:bg-neutral-800'
+                      ? 'bg-orange-50 border-orange-500 text-orange-700 font-bold ring-2 ring-orange-500/30'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                   }`}
                 >
                   <span className="text-base font-black">🟠 Nagad</span>
@@ -819,23 +879,23 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('sslcommerz')}
-                  className={`p-2.5 rounded-xl border flex flex-col items-center gap-1 transition-all ${
+                  className={`p-2.5 rounded-xl border flex flex-col items-center gap-1 transition-all cursor-pointer ${
                     paymentMethod === 'sslcommerz'
-                      ? 'bg-blue-950/40 border-blue-500 text-blue-400 font-bold ring-2 ring-blue-500'
-                      : 'bg-neutral-850 border-neutral-800 text-neutral-400 hover:bg-neutral-800'
+                      ? 'bg-blue-50 border-blue-500 text-blue-700 font-bold ring-2 ring-blue-500/30'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                   }`}
                 >
-                  <span className="text-base font-black">🔵 SSLCommerz</span>
-                  <span className="text-[10px]">Cards &amp; Banking</span>
+                  <span className="text-base font-black">🔵 Cards</span>
+                  <span className="text-[10px]">SSLCommerz</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('rocket')}
-                  className={`p-2.5 rounded-xl border flex flex-col items-center gap-1 transition-all ${
+                  className={`p-2.5 rounded-xl border flex flex-col items-center gap-1 transition-all cursor-pointer ${
                     paymentMethod === 'rocket'
-                      ? 'bg-purple-950/40 border-purple-500 text-purple-400 font-bold ring-2 ring-purple-500'
-                      : 'bg-neutral-850 border-neutral-800 text-neutral-400 hover:bg-neutral-800'
+                      ? 'bg-purple-50 border-purple-500 text-purple-700 font-bold ring-2 ring-purple-500/30'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                   }`}
                 >
                   <span className="text-base font-black">🟣 Rocket</span>
@@ -845,10 +905,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('cash_on_field')}
-                  className={`p-2.5 rounded-xl border flex flex-col items-center gap-1 transition-all ${
+                  className={`p-2.5 rounded-xl border flex flex-col items-center gap-1 transition-all cursor-pointer ${
                     paymentMethod === 'cash_on_field'
-                      ? 'bg-emerald-950/40 border-emerald-500 text-emerald-400 font-bold ring-2 ring-emerald-500'
-                      : 'bg-neutral-850 border-neutral-800 text-neutral-400 hover:bg-neutral-800'
+                      ? 'bg-emerald-50 border-[#0FA958] text-[#064E3B] font-bold ring-2 ring-emerald-500/30'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                   }`}
                 >
                   <span className="text-base font-black">💵 Cash</span>
@@ -858,19 +918,19 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
             </div>
 
             {/* Gateway Info Box */}
-            <div className="bg-neutral-950 p-4 rounded-2xl border border-neutral-800 space-y-2">
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-[#0FA958]" />
                   <span>Secure 256-bit {paymentMethod.toUpperCase()} Checkout</span>
                 </span>
-                <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30">
+                <span className="text-[10px] text-[#064E3B] font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
                   Sandbox Active
                 </span>
               </div>
-              <p className="text-[11px] text-neutral-400 leading-relaxed">
+              <p className="text-[11px] text-slate-600 leading-relaxed">
                 Clicking &quot;Confirm &amp; Pay&quot; will create your match reservation and open the official{' '}
-                <strong className="text-white capitalize">{paymentMethod}</strong> payment interface. Upon server verification, your slot is guaranteed.
+                <strong className="text-slate-800 capitalize">{paymentMethod}</strong> payment interface. Upon server verification, your slot is guaranteed.
               </p>
             </div>
           </div>
@@ -879,54 +939,54 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
         {/* STEP 4: SUCCESS CONFIRMATION & PRINTABLE VOUCHER */}
         {step === 'success' && confirmedBookingData && (
           <div className="p-6 sm:p-8 text-center space-y-5 max-h-[75vh] overflow-y-auto print:max-h-none print:overflow-visible">
-            <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto border border-emerald-500/40">
+            <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-[#0FA958] flex items-center justify-center mx-auto border border-emerald-200">
               <CheckCircle2 className="w-10 h-10" />
             </div>
 
             <div>
-              <h3 className="text-2xl font-black text-white">Slot Successfully Reserved!</h3>
-              <p className="text-xs text-neutral-400 mt-1">
+              <h3 className="text-2xl font-black text-[#0F172A]">Slot Successfully Reserved!</h3>
+              <p className="text-xs text-slate-500 mt-1">
                 Your match slot is locked in PostgreSQL at {turf.name}. Present your pass voucher at reception.
               </p>
             </div>
 
             {/* Match Pass Digital Card */}
-            <div className="bg-neutral-850 border-2 border-dashed border-emerald-500/40 rounded-3xl p-5 text-left space-y-3 relative overflow-hidden">
+            <div className="bg-slate-50 border-2 border-dashed border-[#0FA958]/50 rounded-3xl p-5 text-left space-y-3 relative overflow-hidden shadow-card">
               <div className="flex items-start justify-between">
                 <div>
-                  <div className="text-[10px] uppercase font-bold text-neutral-400">Digital Match Voucher</div>
-                  <div className="text-xl font-mono font-black text-emerald-400 tracking-wider">
+                  <div className="text-[10px] uppercase font-bold text-slate-500">Digital Match Voucher</div>
+                  <div className="text-xl font-mono font-black text-[#064E3B] tracking-wider">
                     #{confirmedBookingData.bookingCode}
                   </div>
                 </div>
-                <span className="text-xs font-bold bg-emerald-500 text-neutral-950 px-2.5 py-1 rounded-lg">
+                <span className="text-xs font-bold bg-[#0FA958] text-white px-2.5 py-1 rounded-lg">
                   CONFIRMED
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 text-xs pt-2 border-t border-neutral-800">
+              <div className="grid grid-cols-2 gap-3 text-xs pt-2 border-t border-slate-200">
                 <div>
-                  <span className="text-neutral-400 block text-[10px]">Arena</span>
-                  <span className="font-bold text-white">{turf.name}</span>
-                  <span className="text-[11px] text-neutral-400 block">{turf.address}</span>
+                  <span className="text-slate-500 block text-[10px]">Arena</span>
+                  <span className="font-bold text-[#0F172A]">{turf.name}</span>
+                  <span className="text-[11px] text-slate-500 block">{turf.address}</span>
                 </div>
                 <div>
-                  <span className="text-neutral-400 block text-[10px]">Date & Time</span>
-                  <span className="font-bold text-white">{confirmedBookingData.date}</span>
-                  <span className="text-[11px] text-emerald-400 font-mono block">
+                  <span className="text-slate-500 block text-[10px]">Date & Time</span>
+                  <span className="font-bold text-[#0F172A]">{confirmedBookingData.date}</span>
+                  <span className="text-[11px] text-[#064E3B] font-mono block">
                     {confirmedBookingData.startTime} - {confirmedBookingData.endTime}
                   </span>
                 </div>
               </div>
 
               {/* Authentic Scannable QR code preview */}
-              <div className="pt-2 border-t border-neutral-800 flex items-center justify-between">
+              <div className="pt-2 border-t border-slate-200 flex items-center justify-between">
                 <div className="text-xs">
-                  <span className="text-neutral-400 block text-[10px]">Booker Name</span>
-                  <span className="font-bold text-white">{confirmedBookingData.userName}</span>
-                  <span className="text-[10px] text-neutral-400 block">{confirmedBookingData.userPhone}</span>
+                  <span className="text-slate-500 block text-[10px]">Booker Name</span>
+                  <span className="font-bold text-[#0F172A]">{confirmedBookingData.userName}</span>
+                  <span className="text-[10px] text-slate-500 block">{confirmedBookingData.userPhone}</span>
                 </div>
-                <div className="bg-white p-1.5 rounded-lg shadow">
+                <div className="bg-white p-1.5 rounded-lg border border-slate-200 shadow-2xs">
                   <svg className="w-12 h-12" viewBox="0 0 100 100" shapeRendering="crispEdges">
                     <rect width="100" height="100" fill="#ffffff" />
                     <rect x="10" y="10" width="24" height="24" fill="#000000" />
@@ -943,18 +1003,18 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-2 text-xs pt-2 border-t border-neutral-800 bg-neutral-900/60 -mx-5 -mb-5 p-4">
+              <div className="grid grid-cols-3 gap-2 text-xs pt-2 border-t border-slate-200 bg-white -mx-5 -mb-5 p-4">
                 <div>
-                  <span className="text-[10px] text-neutral-400 block">Total Pitch Fee</span>
-                  <span className="font-mono font-bold text-white">৳{confirmedBookingData.totalAmount}</span>
+                  <span className="text-[10px] text-slate-500 block">Total Pitch Fee</span>
+                  <span className="font-mono font-bold text-[#0F172A]">BDT {confirmedBookingData.totalAmount}</span>
                 </div>
                 <div>
-                  <span className="text-[10px] text-neutral-400 block">Paid ({confirmedBookingData.paymentMethod.toUpperCase()})</span>
-                  <span className="font-mono font-bold text-emerald-400">৳{confirmedBookingData.advancePaid}</span>
+                  <span className="text-[10px] text-slate-500 block">Paid ({confirmedBookingData.paymentMethod.toUpperCase()})</span>
+                  <span className="font-mono font-bold text-[#0FA958]">BDT {confirmedBookingData.advancePaid}</span>
                 </div>
                 <div>
-                  <span className="text-[10px] text-neutral-400 block">Due on Field</span>
-                  <span className="font-mono font-bold text-amber-400">৳{confirmedBookingData.dueAmount}</span>
+                  <span className="text-[10px] text-slate-500 block">Due on Field</span>
+                  <span className="font-mono font-bold text-amber-700">BDT {confirmedBookingData.dueAmount}</span>
                 </div>
               </div>
             </div>
@@ -962,9 +1022,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2 print:hidden">
               <button
                 onClick={() => setShowReceiptModal(true)}
-                className="w-full sm:w-auto px-5 py-2.5 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 font-semibold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 border border-neutral-700 cursor-pointer"
+                className="w-full sm:w-auto px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 border border-slate-200 cursor-pointer"
               >
-                <Printer className="w-4 h-4 text-emerald-400" />
+                <Printer className="w-4 h-4 text-[#0FA958]" />
                 <span>Download / Print Tax Receipt</span>
               </button>
               <button
@@ -972,7 +1032,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
                   onClose();
                   setActiveTab('my-bookings');
                 }}
-                className="w-full sm:w-auto px-6 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold rounded-xl text-xs transition-colors shadow-lg shadow-emerald-500/20 cursor-pointer"
+                className="w-full sm:w-auto px-6 py-2.5 bg-[#0FA958] hover:bg-[#064E3B] text-white font-bold rounded-xl text-xs transition-colors shadow-md shadow-emerald-600/20 cursor-pointer"
                 id="view-my-bookings-btn"
               >
                 Go to My Bookings
@@ -983,15 +1043,15 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
 
         {/* Modal Bottom Controls */}
         {step !== 'success' && (
-          <div className="p-4 sm:p-5 bg-neutral-900 border-t border-neutral-800 flex items-center justify-between gap-3">
+          <div className="p-4 sm:p-5 bg-white border-t border-slate-100 flex items-center justify-between gap-3 pb-[max(1rem,env(safe-area-inset-bottom,16px))]">
             {step === 'slots' ? (
               <>
                 <div>
-                  <span className="text-[10px] text-neutral-400 block font-semibold">
+                  <span className="text-[10px] text-slate-500 block font-semibold">
                     {durationHours} hour{durationHours !== 1 ? 's' : ''} selected
                   </span>
-                  <span className="text-xl font-black text-emerald-400 font-mono">
-                    ৳{totalAmount.toLocaleString()}
+                  <span className="text-xl font-black text-[#064E3B] font-mono">
+                    BDT {totalAmount.toLocaleString()}
                   </span>
                 </div>
                 <button
@@ -1000,8 +1060,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
                   onClick={handleProceedToSummary}
                   className={`px-6 py-2.5 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all ${
                     selectedSlots.length > 0
-                      ? 'bg-emerald-500 hover:bg-emerald-400 text-neutral-950 shadow-lg shadow-emerald-500/20 cursor-pointer'
-                      : 'bg-neutral-800 text-neutral-600 cursor-not-allowed'
+                      ? 'bg-[#0FA958] hover:bg-[#064E3B] text-white shadow-md shadow-emerald-600/20 cursor-pointer'
+                      : 'bg-slate-100 text-slate-400 cursor-not-allowed'
                   }`}
                   id="proceed-to-summary-btn"
                 >
@@ -1014,7 +1074,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
                 <button
                   type="button"
                   onClick={() => setStep('slots')}
-                  className="px-4 py-2 text-xs font-semibold text-neutral-400 hover:text-white flex items-center gap-1"
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 flex items-center gap-1 cursor-pointer"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
                   <span>Back to Slots</span>
@@ -1022,7 +1082,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
                 <button
                   type="button"
                   onClick={handleProceedToPayment}
-                  className="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-500/20 cursor-pointer"
+                  className="px-6 py-2.5 bg-[#0FA958] hover:bg-[#064E3B] text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer"
                   id="proceed-to-payment-btn"
                 >
                   <span>Proceed to Payment</span>
@@ -1034,7 +1094,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
                 <button
                   type="button"
                   onClick={() => setStep('summary')}
-                  className="px-4 py-2 text-xs font-semibold text-neutral-400 hover:text-white flex items-center gap-1"
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 flex items-center gap-1 cursor-pointer"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
                   <span>Back</span>
@@ -1043,19 +1103,19 @@ export const BookingModal: React.FC<BookingModalProps> = ({ turf, onClose }) => 
                   type="button"
                   disabled={isProcessing}
                   onClick={handleConfirmPayment}
-                  className="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-emerald-500/25 cursor-pointer disabled:opacity-50"
+                  className="px-6 py-2.5 bg-[#0FA958] hover:bg-[#064E3B] text-white font-bold rounded-xl text-xs flex items-center gap-2 shadow-md shadow-emerald-600/20 cursor-pointer disabled:opacity-50"
                   id="confirm-pay-btn"
                 >
                   {isProcessing ? (
                     <>
-                      <div className="w-4 h-4 border-2 border-neutral-950 border-t-transparent rounded-full animate-spin" />
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                       <span>Initiating Gateway...</span>
                     </>
                   ) : (
                     <>
                       <ShieldCheck className="w-4 h-4" />
                       <span>
-                        {paymentMethod === 'cash_on_field' ? 'Confirm Reservation' : `Pay ৳${finalPayAmount.toLocaleString()} via ${paymentMethod.toUpperCase()}`}
+                        {paymentMethod === 'cash_on_field' ? 'Confirm Reservation' : `Pay BDT ${finalPayAmount.toLocaleString()} via ${paymentMethod.toUpperCase()}`}
                       </span>
                     </>
                   )}

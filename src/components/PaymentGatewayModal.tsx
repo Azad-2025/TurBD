@@ -112,14 +112,14 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md overflow-y-auto">
-      <div className="relative w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-3xl overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-md overflow-y-auto">
+      <div className="relative w-full max-w-md bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-200">
         {/* GATEWAY BRAND HEADER */}
         {gateway === 'bkash' && (
           <div className="bg-[#E2136E] text-white p-5 text-center relative">
             <button
               onClick={onCancel}
-              className="absolute top-4 right-4 p-1.5 rounded-full bg-black/20 hover:bg-black/40 text-white transition-all"
+              className="absolute top-4 right-4 p-1.5 rounded-full bg-black/20 hover:bg-black/40 text-white transition-all cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
@@ -137,7 +137,7 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
           <div className="bg-gradient-to-r from-[#F7941D] to-[#ED1C24] text-white p-5 text-center relative">
             <button
               onClick={onCancel}
-              className="absolute top-4 right-4 p-1.5 rounded-full bg-black/20 hover:bg-black/40 text-white transition-all"
+              className="absolute top-4 right-4 p-1.5 rounded-full bg-black/20 hover:bg-black/40 text-white transition-all cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
@@ -155,7 +155,7 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
           <div className="bg-[#184A90] text-white p-5 text-center relative">
             <button
               onClick={onCancel}
-              className="absolute top-4 right-4 p-1.5 rounded-full bg-black/20 hover:bg-black/40 text-white transition-all"
+              className="absolute top-4 right-4 p-1.5 rounded-full bg-black/20 hover:bg-black/40 text-white transition-all cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
@@ -170,27 +170,27 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
         )}
 
         {/* ORDER SUMMARY STRIP */}
-        <div className="bg-neutral-950 px-5 py-3 border-b border-neutral-800 flex items-center justify-between text-xs">
+        <div className="bg-slate-50 px-5 py-3 border-b border-slate-200 flex items-center justify-between text-xs">
           <div>
-            <div className="text-[10px] text-neutral-400 font-medium">{turfName}</div>
-            <div className="font-mono font-bold text-white tracking-wider">#{bookingCode}</div>
+            <div className="text-[10px] text-slate-500 font-medium">{turfName}</div>
+            <div className="font-mono font-bold text-[#0F172A] tracking-wider">#{bookingCode}</div>
           </div>
           <div className="text-right">
-            <div className="text-[10px] text-neutral-400">Payable Amount</div>
-            <div className="font-mono font-black text-emerald-400 text-sm sm:text-base">
-              ৳{amount.toLocaleString()} BDT
+            <div className="text-[10px] text-slate-500">Payable Amount</div>
+            <div className="font-mono font-black text-[#064E3B] text-sm sm:text-base">
+              BDT {amount.toLocaleString()}
             </div>
           </div>
         </div>
 
         {/* TIMEOUT BADGE */}
-        <div className="px-5 py-2 bg-neutral-850 border-b border-neutral-800 flex items-center justify-between text-[11px]">
-          <div className="flex items-center gap-1.5 text-neutral-400">
-            <Clock className="w-3.5 h-3.5 text-amber-400" />
+        <div className="px-5 py-2 bg-slate-100 border-b border-slate-200 flex items-center justify-between text-[11px]">
+          <div className="flex items-center gap-1.5 text-slate-600">
+            <Clock className="w-3.5 h-3.5 text-amber-600" />
             <span>Session expires in:</span>
             <span
               className={`font-mono font-bold ${
-                secondsRemaining < 120 ? 'text-rose-400 animate-pulse' : 'text-amber-400'
+                secondsRemaining < 120 ? 'text-rose-600 animate-pulse' : 'text-amber-700'
               }`}
             >
               {timeFormatted}
@@ -199,17 +199,17 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
           <button
             type="button"
             onClick={fillTestCredentials}
-            className="text-[10px] text-purple-400 hover:text-purple-300 underline font-medium"
+            className="text-[10px] text-[#0FA958] hover:text-[#064E3B] underline font-medium cursor-pointer"
           >
             Auto-fill Test Credentials
           </button>
         </div>
 
         {/* BODY CONTENT */}
-        <div className="p-5 space-y-4 text-xs">
+        <div className="p-5 space-y-4 text-xs text-[#0F172A]">
           {errorMessage && (
-            <div className="p-3 bg-rose-500/15 border border-rose-500/30 rounded-xl text-rose-300 flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
               <span>{errorMessage}</span>
             </div>
           )}
@@ -219,11 +219,11 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
             <div className="space-y-3">
               {checkoutStep === 1 ? (
                 <>
-                  <div className="text-neutral-300 font-medium">
+                  <div className="text-slate-700 font-medium">
                     Enter your bKash Account Number to authorize payment:
                   </div>
                   <div>
-                    <label className="block text-[10px] uppercase font-bold text-neutral-400 mb-1">
+                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">
                       bKash Mobile Number
                     </label>
                     <input
@@ -231,16 +231,16 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
                       value={accountNumber}
                       onChange={(e) => setAccountNumber(e.target.value)}
                       placeholder="017XXXXXXXX"
-                      className="w-full bg-neutral-950 border border-neutral-700 rounded-xl px-3 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-pink-500"
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2.5 text-sm font-mono text-[#0F172A] focus:outline-none focus:border-pink-500 focus:ring-1 focus:ring-pink-500"
                     />
                   </div>
-                  <div className="text-[10px] text-neutral-400 leading-relaxed">
+                  <div className="text-[10px] text-slate-500 leading-relaxed">
                     By clicking &quot;Next&quot;, you agree to bKash merchant checkout terms &amp; conditions.
                   </div>
                   <button
                     type="button"
                     onClick={() => setCheckoutStep(2)}
-                    className="w-full py-2.5 rounded-xl bg-[#E2136E] hover:bg-[#c90f5f] text-white font-bold flex items-center justify-center gap-1.5 transition-all"
+                    className="w-full py-2.5 rounded-xl bg-[#E2136E] hover:bg-[#c90f5f] text-white font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-md shadow-pink-500/20"
                   >
                     <span>Proceed to Verification</span>
                     <ArrowRight className="w-4 h-4" />
@@ -248,12 +248,12 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
                 </>
               ) : (
                 <>
-                  <div className="text-neutral-300 font-medium">
-                    Enter OTP sent to <strong className="text-white">{accountNumber}</strong> and your PIN:
+                  <div className="text-slate-700 font-medium">
+                    Enter OTP sent to <strong className="text-[#0F172A]">{accountNumber}</strong> and your PIN:
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-[10px] uppercase font-bold text-neutral-400 mb-1">
+                      <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">
                         Verification Code (OTP)
                       </label>
                       <input
@@ -261,11 +261,11 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
                         value={otp}
                         onChange={(e) => setOtp(e.target.value)}
                         placeholder="123456"
-                        className="w-full bg-neutral-950 border border-neutral-700 rounded-xl px-3 py-2 text-xs font-mono text-white text-center focus:outline-none focus:border-pink-500"
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-[#0F172A] text-center focus:outline-none focus:border-pink-500"
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] uppercase font-bold text-neutral-400 mb-1">
+                      <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">
                         bKash PIN
                       </label>
                       <input
@@ -273,7 +273,7 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
                         value={pin}
                         onChange={(e) => setPin(e.target.value)}
                         placeholder="•••••"
-                        className="w-full bg-neutral-950 border border-neutral-700 rounded-xl px-3 py-2 text-xs font-mono text-white text-center focus:outline-none focus:border-pink-500"
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-[#0F172A] text-center focus:outline-none focus:border-pink-500"
                       />
                     </div>
                   </div>
@@ -282,7 +282,7 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
                     <button
                       type="button"
                       onClick={() => setCheckoutStep(1)}
-                      className="w-1/3 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-semibold text-center transition-all"
+                      className="w-1/3 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-center transition-all cursor-pointer"
                     >
                       Back
                     </button>
@@ -290,12 +290,12 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
                       type="button"
                       disabled={isVerifying}
                       onClick={handleExecutePayment}
-                      className="w-2/3 py-2.5 rounded-xl bg-[#E2136E] hover:bg-[#c90f5f] disabled:opacity-50 text-white font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-pink-900/40"
+                      className="w-2/3 py-2.5 rounded-xl bg-[#E2136E] hover:bg-[#c90f5f] disabled:opacity-50 text-white font-bold flex items-center justify-center gap-2 transition-all shadow-md shadow-pink-600/30 cursor-pointer"
                     >
                       {isVerifying ? (
                         <span>Verifying with Server...</span>
                       ) : (
-                        <span>Confirm ৳{amount.toLocaleString()}</span>
+                        <span>Confirm BDT {amount.toLocaleString()}</span>
                       )}
                     </button>
                   </div>
@@ -308,7 +308,7 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
           {gateway === 'nagad' && (
             <div className="space-y-3">
               <div>
-                <label className="block text-[10px] uppercase font-bold text-neutral-400 mb-1">
+                <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">
                   Nagad Account Number
                 </label>
                 <input
@@ -316,12 +316,12 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
                   value={accountNumber}
                   onChange={(e) => setAccountNumber(e.target.value)}
                   placeholder="01XXXXXXXXX"
-                  className="w-full bg-neutral-950 border border-neutral-700 rounded-xl px-3 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-orange-500"
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2.5 text-sm font-mono text-[#0F172A] focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
                 />
               </div>
 
               <div>
-                <label className="block text-[10px] uppercase font-bold text-neutral-400 mb-1">
+                <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">
                   Nagad PIN
                 </label>
                 <input
@@ -329,11 +329,11 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
                   value={pin}
                   onChange={(e) => setPin(e.target.value)}
                   placeholder="••••"
-                  className="w-full bg-neutral-950 border border-neutral-700 rounded-xl px-3 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-orange-500"
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2.5 text-sm font-mono text-[#0F172A] focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
                 />
               </div>
 
-              <div className="flex items-center gap-2 text-[10px] text-neutral-400">
+              <div className="flex items-center gap-2 text-[10px] text-slate-600">
                 <input type="checkbox" defaultChecked className="rounded accent-orange-500" id="nagad-agree" />
                 <label htmlFor="nagad-agree">I agree to Nagad DFS merchant terms</label>
               </div>
@@ -342,9 +342,9 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
                 type="button"
                 disabled={isVerifying}
                 onClick={handleExecutePayment}
-                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-[#F7941D] to-[#ED1C24] hover:opacity-90 disabled:opacity-50 text-white font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-orange-900/40"
+                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-[#F7941D] to-[#ED1C24] hover:opacity-90 disabled:opacity-50 text-white font-bold flex items-center justify-center gap-2 transition-all shadow-md shadow-orange-600/30 cursor-pointer"
               >
-                {isVerifying ? <span>Verifying with Server...</span> : <span>Proceed ৳{amount.toLocaleString()}</span>}
+                {isVerifying ? <span>Verifying with Server...</span> : <span>Proceed BDT {amount.toLocaleString()}</span>}
               </button>
             </div>
           )}
@@ -353,12 +353,12 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
           {gateway === 'sslcommerz' && (
             <div className="space-y-3">
               {/* Tabs */}
-              <div className="grid grid-cols-3 gap-1 bg-neutral-950 p-1 rounded-xl border border-neutral-800 text-[10px] font-bold">
+              <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-[10px] font-bold">
                 <button
                   type="button"
                   onClick={() => setSslTab('mfs')}
-                  className={`py-1.5 rounded-lg transition-all ${
-                    sslTab === 'mfs' ? 'bg-[#184A90] text-white' : 'text-neutral-400 hover:text-white'
+                  className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                    sslTab === 'mfs' ? 'bg-[#184A90] text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   Mobile Banking
@@ -366,8 +366,8 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setSslTab('cards')}
-                  className={`py-1.5 rounded-lg transition-all ${
-                    sslTab === 'cards' ? 'bg-[#184A90] text-white' : 'text-neutral-400 hover:text-white'
+                  className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                    sslTab === 'cards' ? 'bg-[#184A90] text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   Cards
@@ -375,8 +375,8 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setSslTab('net')}
-                  className={`py-1.5 rounded-lg transition-all ${
-                    sslTab === 'net' ? 'bg-[#184A90] text-white' : 'text-neutral-400 hover:text-white'
+                  className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                    sslTab === 'net' ? 'bg-[#184A90] text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   Net Banking
@@ -386,31 +386,31 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
               {sslTab === 'cards' && (
                 <div className="space-y-2">
                   <div>
-                    <label className="block text-[10px] text-neutral-400 mb-1">Card Number</label>
+                    <label className="block text-[10px] text-slate-500 mb-1">Card Number</label>
                     <input
                       type="text"
                       value={cardNumber}
                       onChange={(e) => setCardNumber(e.target.value)}
-                      className="w-full bg-neutral-950 border border-neutral-700 rounded-xl px-3 py-2 text-xs font-mono text-white"
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-[#0F172A]"
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-[10px] text-neutral-400 mb-1">Expiry</label>
+                      <label className="block text-[10px] text-slate-500 mb-1">Expiry</label>
                       <input
                         type="text"
                         value={cardExpiry}
                         onChange={(e) => setCardExpiry(e.target.value)}
-                        className="w-full bg-neutral-950 border border-neutral-700 rounded-xl px-3 py-2 text-xs font-mono text-white text-center"
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-[#0F172A] text-center"
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] text-neutral-400 mb-1">CVV</label>
+                      <label className="block text-[10px] text-slate-500 mb-1">CVV</label>
                       <input
                         type="password"
                         value={cardCvv}
                         onChange={(e) => setCardCvv(e.target.value)}
-                        className="w-full bg-neutral-950 border border-neutral-700 rounded-xl px-3 py-2 text-xs font-mono text-white text-center"
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-[#0F172A] text-center"
                       />
                     </div>
                   </div>
@@ -419,21 +419,21 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
 
               {sslTab === 'mfs' && (
                 <div className="space-y-2">
-                  <div className="text-[11px] text-neutral-400">Supported: bKash, Nagad, Rocket, Upay</div>
+                  <div className="text-[11px] text-slate-600">Supported: bKash, Nagad, Rocket, Upay</div>
                   <div>
-                    <label className="block text-[10px] text-neutral-400 mb-1">MFS Mobile Number</label>
+                    <label className="block text-[10px] text-slate-500 mb-1">MFS Mobile Number</label>
                     <input
                       type="text"
                       value={accountNumber}
                       onChange={(e) => setAccountNumber(e.target.value)}
-                      className="w-full bg-neutral-950 border border-neutral-700 rounded-xl px-3 py-2 text-xs font-mono text-white"
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-[#0F172A]"
                     />
                   </div>
                 </div>
               )}
 
               {sslTab === 'net' && (
-                <div className="p-3 bg-neutral-950 rounded-xl border border-neutral-800 text-center text-neutral-400 text-xs">
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-center text-slate-600 text-xs">
                   City Touch • Islami Bank • EBL Skybanking (Instant Redirection)
                 </div>
               )}
@@ -442,36 +442,36 @@ export const PaymentGatewayModal: React.FC<PaymentGatewayModalProps> = ({
                 type="button"
                 disabled={isVerifying}
                 onClick={handleExecutePayment}
-                className="w-full py-2.5 rounded-xl bg-[#184A90] hover:bg-[#12386e] disabled:opacity-50 text-white font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/40"
+                className="w-full py-2.5 rounded-xl bg-[#184A90] hover:bg-[#12386e] disabled:opacity-50 text-white font-bold flex items-center justify-center gap-2 transition-all shadow-md shadow-blue-900/30 cursor-pointer"
               >
                 {isVerifying ? (
                   <span>Validating Transaction...</span>
                 ) : (
-                  <span>Pay Now ৳{amount.toLocaleString()}</span>
+                  <span>Pay Now BDT {amount.toLocaleString()}</span>
                 )}
               </button>
             </div>
           )}
 
           {/* SECURITY TRUST BADGES */}
-          <div className="pt-3 border-t border-neutral-800 flex items-center justify-between text-[10px] text-neutral-400">
+          <div className="pt-3 border-t border-slate-200 flex items-center justify-between text-[10px] text-slate-500">
             <div className="flex items-center gap-1.5">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <ShieldCheck className="w-3.5 h-3.5 text-[#0FA958]" />
               <span>256-Bit SSL Encrypted</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <Lock className="w-3.5 h-3.5 text-purple-400" />
+              <Lock className="w-3.5 h-3.5 text-purple-600" />
               <span>PCI-DSS Compliant</span>
             </div>
           </div>
         </div>
 
         {/* MODAL FOOTER */}
-        <div className="p-3 bg-neutral-950 border-t border-neutral-800 text-center">
+        <div className="p-3 bg-slate-50 border-t border-slate-200 text-center">
           <button
             type="button"
             onClick={onCancel}
-            className="text-xs text-neutral-400 hover:text-white transition-all"
+            className="text-xs text-slate-500 hover:text-slate-800 transition-all cursor-pointer"
           >
             Cancel and Return to Match Overview
           </button>

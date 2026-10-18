@@ -1,10 +1,15 @@
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import { db } from '../../db/index.ts';
-import { uploads, turfs } from '../../db/schema.ts';
+import { uploads, turfs, users } from '../../db/schema.ts';
 import { eq } from 'drizzle-orm';
 import { requireAuth, requireOwner } from '../middleware/auth.ts';
-import { processAndSaveImage, processAndSaveDocument } from '../utils/storage.ts';
+import {
+  processAndSaveImage,
+  processAndSaveDocument,
+  StorageConfigurationError,
+  StorageUpstreamError,
+} from '../utils/storage.ts';
 
 export const uploadRouter = Router();
 
@@ -57,10 +62,13 @@ uploadRouter.post(
   '/turf-images',
   requireAuth,
   requireOwner,
-  imageUpload.array('images', 10),
+  imageUpload.any(),
   async (req: Request, res: Response) => {
     try {
-      const files = req.files as Express.Multer.File[];
+      const rawFiles = req.files || (req.file ? [req.file] : []);
+      const files: Express.Multer.File[] = Array.isArray(rawFiles)
+        ? (rawFiles as Express.Multer.File[])
+        : (Object.values(rawFiles) as any).flat();
       if (!files || files.length === 0) {
         res.status(400).json({ error: 'No image files provided. Please select at least one image.' });
         return;
@@ -100,6 +108,7 @@ uploadRouter.post(
             imageUrl: processed.imageUrl,
             thumbnailUrl: processed.thumbnailUrl,
             storageType: processed.storageType,
+            storageKey: processed.storageKey || null,
           })
           .returning();
 
@@ -112,6 +121,7 @@ uploadRouter.post(
           fileType: uploadRecord.fileType,
           fileSize: uploadRecord.fileSize,
           storageType: uploadRecord.storageType,
+          storageKey: uploadRecord.storageKey,
           createdAt: uploadRecord.createdAt,
         });
 
@@ -174,12 +184,22 @@ uploadRouter.post(
         success: true,
         count: uploadedResults.length,
         files: uploadedResults,
+        images: uploadedResults,
+        imageUrl: uploadedResults[0]?.imageUrl || '',
         message: `${uploadedResults.length} image(s) processed (compressed, converted to WebP) and stored successfully.`,
       });
     } catch (err: any) {
-      console.error('Turf image upload error:', err);
-      res.status(500).json({
+      console.error('Turf image upload error:', err.message);
+      const statusCode =
+        err.statusCode ||
+        (err instanceof StorageConfigurationError
+          ? 503
+          : err instanceof StorageUpstreamError
+          ? 502
+          : 500);
+      res.status(statusCode).json({
         error: err.message || 'Failed to process and upload turf images.',
+        code: err.code || 'UPLOAD_FAILED',
       });
     }
   }
@@ -196,104 +216,13 @@ uploadRouter.post(
   requireAuth,
   requireOwner,
   documentUpload.array('documents', 5),
-  async (req: Request, res: Response) => {
-    try {
-      const files = req.files as Express.Multer.File[];
-      if (!files || files.length === 0) {
-        res.status(400).json({ error: 'No documents provided. Please select at least one document.' });
-        return;
-      }
-
-      const category = (req.body.category as string) || 'verification';
-      const validCategories = ['nid', 'trade_license', 'verification'];
-      if (!validCategories.includes(category)) {
-        res.status(400).json({
-          error: `Invalid document category. Must be one of: ${validCategories.join(', ')}`,
-        });
-        return;
-      }
-
-      const turfId = req.body.turfId ? parseInt(req.body.turfId, 10) : null;
-      const uploadedResults = [];
-
-      for (const file of files) {
-        // Document validation and storage
-        const processed = await processAndSaveDocument(
-          file.buffer,
-          file.originalname,
-          category
-        );
-
-        // Store metadata in Cloud SQL `uploads` table
-        const [uploadRecord] = await db
-          .insert(uploads)
-          .values({
-            uploadedBy: req.user!.id,
-            turfId: turfId && !isNaN(turfId) ? turfId : null,
-            category,
-            originalName: processed.originalName,
-            fileName: processed.fileName,
-            fileType: processed.fileType,
-            fileSize: processed.fileSize,
-            imageUrl: processed.imageUrl,
-            thumbnailUrl: processed.thumbnailUrl,
-            storageType: processed.storageType,
-          })
-          .returning();
-
-        uploadedResults.push({
-          id: uploadRecord.id,
-          originalName: uploadRecord.originalName,
-          category: uploadRecord.category,
-          imageUrl: uploadRecord.imageUrl,
-          thumbnailUrl: uploadRecord.thumbnailUrl,
-          fileType: uploadRecord.fileType,
-          fileSize: uploadRecord.fileSize,
-          storageType: uploadRecord.storageType,
-          createdAt: uploadRecord.createdAt,
-        });
-
-        // If turfId exists, update the turf's documents JSONB array
-        if (turfId && !isNaN(turfId)) {
-          const [existingTurf] = await db
-            .select()
-            .from(turfs)
-            .where(eq(turfs.id, turfId))
-            .limit(1);
-
-          if (existingTurf) {
-            const currentDocs = (existingTurf.documents as any[]) || [];
-            await db
-              .update(turfs)
-              .set({
-                documents: [
-                  ...currentDocs,
-                  {
-                    id: uploadRecord.id,
-                    type: category,
-                    url: processed.imageUrl,
-                    name: processed.originalName,
-                    uploadedAt: new Date().toISOString(),
-                  },
-                ],
-              })
-              .where(eq(turfs.id, turfId));
-          }
-        }
-      }
-
-      res.status(201).json({
-        success: true,
-        count: uploadedResults.length,
-        files: uploadedResults,
-        message: `${uploadedResults.length} document(s) securely verified and uploaded.`,
-      });
-    } catch (err: any) {
-      console.error('Document upload error:', err);
-      res.status(500).json({
-        error: err.message || 'Failed to upload document.',
-      });
-    }
+  async (_req: Request, res: Response) => {
+    // Security & Privacy Guard: Never store sensitive owner NID/trade licenses on public image buckets or ephemeral disks
+    res.status(503).json({
+      error: 'Owner verification document upload is disabled until dedicated private encrypted cloud storage is configured. Please contact Super Admin for manual verification.',
+      code: 'PRIVATE_STORAGE_NOT_CONFIGURED',
+    });
+    return;
   }
 );
 
@@ -333,5 +262,107 @@ uploadRouter.get('/', requireAuth, requireOwner, async (req: Request, res: Respo
   } catch (err: any) {
     console.error('Fetch uploads error:', err);
     res.status(500).json({ error: 'Failed to fetch uploads' });
+  }
+});
+
+/**
+ * POST /api/uploads/avatar
+ * Uploads user profile photo
+ * Validation: Magic bytes, mime type, size limit (5MB)
+ * Access: Authenticated users only
+ */
+uploadRouter.post(
+  '/avatar',
+  requireAuth,
+  imageUpload.single('avatar'),
+  async (req: Request, res: Response) => {
+    try {
+      const file = req.file;
+      if (!file) {
+        return res.status(400).json({ error: 'No avatar image file provided. Please select an image.' });
+      }
+
+      // Check file size (5MB max for avatars)
+      if (file.size > 5 * 1024 * 1024) {
+        return res.status(400).json({ error: 'Avatar file size exceeds the 5MB limit.' });
+      }
+
+      // Process image: optimize and store
+      const processed = await processAndSaveImage(
+        file.buffer,
+        file.originalname,
+        'avatar'
+      );
+
+      // Save upload record in database
+      await db.insert(uploads).values({
+        uploadedBy: req.user!.id,
+        category: 'avatar',
+        originalName: processed.originalName,
+        fileName: processed.fileName,
+        fileType: processed.fileType,
+        fileSize: processed.fileSize,
+        imageUrl: processed.imageUrl,
+        thumbnailUrl: processed.thumbnailUrl,
+        storageType: processed.storageType,
+        storageKey: processed.storageKey || null,
+      });
+
+      // Update user's profile image
+      const [updatedUser] = await db
+        .update(users)
+        .set({ profileImage: processed.imageUrl })
+        .where(eq(users.id, req.user!.id))
+        .returning();
+
+      return res.status(200).json({
+        success: true,
+        profileImage: processed.imageUrl,
+        user: {
+          id: updatedUser.id,
+          name: updatedUser.name,
+          email: updatedUser.email,
+          profileImage: updatedUser.profileImage,
+        },
+        message: 'Profile photo uploaded and saved successfully.',
+      });
+    } catch (err: any) {
+      console.error('Avatar upload error:', err.message);
+      const statusCode =
+        err.statusCode ||
+        (err instanceof StorageConfigurationError
+          ? 503
+          : err instanceof StorageUpstreamError
+          ? 502
+          : 500);
+      return res.status(statusCode).json({
+        error: err.message || 'Failed to process and upload profile image.',
+        code: err.code || 'UPLOAD_FAILED',
+      });
+    }
+  }
+);
+
+/**
+ * DELETE /api/uploads/avatar
+ * Removes user profile photo
+ * Access: Authenticated users only
+ */
+uploadRouter.delete('/avatar', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const [updatedUser] = await db
+      .update(users)
+      .set({ profileImage: null })
+      .where(eq(users.id, req.user!.id))
+      .returning();
+
+    return res.status(200).json({
+      success: true,
+      profileImage: null,
+      message: 'Profile photo removed successfully.',
+    });
+  } catch (err: any) {
+    console.error('Avatar remove error:', err);
+    return res.status(500).json({ error: 'Failed to remove profile image.' });
   }
 });

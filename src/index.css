@@ -1,1 +1,108 @@
 @import "tailwindcss";
+
+:root {
+  --color-primary: #0FA958;
+  --color-forest: #064E3B;
+  --color-forest-dark: #04382A;
+  --color-bg: #F7FAF8;
+  --color-text-main: #0F172A;
+  --color-text-secondary: #64748B;
+  --color-card: #FFFFFF;
+  --color-border: #E2E8F0;
+}
+
+@layer base {
+  html, body {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    overscroll-behavior-y: contain;
+    background-color: #F7FAF8;
+    color: #0F172A;
+  }
+}
+
+/* Custom soft shadows inspired by Airbnb & Strava */
+.shadow-soft {
+  box-shadow: 0 2px 8px -1px rgba(15, 23, 42, 0.04), 0 1px 3px -1px rgba(15, 23, 42, 0.02);
+}
+
+.shadow-card {
+  box-shadow: 0 4px 16px -2px rgba(15, 23, 42, 0.05), 0 1px 4px -1px rgba(15, 23, 42, 0.03);
+}
+
+.shadow-card-hover {
+  box-shadow: 0 10px 25px -4px rgba(15, 23, 42, 0.08), 0 4px 8px -2px rgba(15, 23, 42, 0.03);
+}
+
+.shadow-brand {
+  box-shadow: 0 4px 14px 0 rgba(15, 169, 88, 0.25);
+}
+
+/* Custom scrollbar hiding for native mobile horizontal swipe lists */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Safe area insets for notched devices */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 16px);
+}
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 16px);
+}
+.mb-safe {
+  margin-bottom: env(safe-area-inset-bottom, 16px);
+}
+
+/* Native momentum scrolling */
+.touch-scroll {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Subtle Hero Section Floating & Ken Burns Animations */
+@keyframes hero-float-slow {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes hero-float-delayed {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(4px);
+  }
+}
+
+@keyframes hero-ken-burns {
+  0% {
+    transform: scale(1.0);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1.0);
+  }
+}
+
+.animate-hero-float-slow {
+  animation: hero-float-slow 4.5s ease-in-out infinite;
+}
+
+.animate-hero-float-delayed {
+  animation: hero-float-delayed 5.5s ease-in-out infinite;
+}
+
+.animate-hero-ken-burns {
+  animation: hero-ken-burns 14s ease-in-out infinite alternate;
+  will-change: transform;
+}
