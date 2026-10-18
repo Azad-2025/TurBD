@@ -29,7 +29,7 @@ FROM node:22-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
-ENV PORT=3000
+ENV PORT=10000
 
 # Install runtime dependencies required by sharp/canvas if needed
 RUN apk add --no-cache curl tzdata
@@ -52,11 +52,11 @@ RUN mkdir -p /app/public/uploads && chown -R turfbd:turfbd /app
 
 USER turfbd
 
-EXPOSE 3000
+EXPOSE 10000
 
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:3000/api/health || exit 1
+  CMD curl -f http://localhost:${PORT:-10000}/api/health || exit 1
 
 # Production Start Command
 CMD ["node", "dist/server.cjs"]
