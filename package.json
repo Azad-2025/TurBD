@@ -28,6 +28,7 @@
     "test:install-visibility": "tsx scripts/test_install_button_visibility.ts",
     "test:r2-storage": "tsx scripts/test_r2_storage.ts",
     "test:cloudinary-storage": "tsx scripts/test_cloudinary_storage.ts",
+    "test:pwa-mobile": "tsx scripts/test_mobile_pwa_install.ts",
     "desktop:build": "npm run build && echo 'Desktop bundle ready in dist/'"
   },
   "dependencies": {

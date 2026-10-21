@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { TurfBDLogo } from './TurfBDLogo';
 import { NotificationBell } from './NotificationBell';
 import { FilterModal } from './FilterModal';
+import { MobileInstallButton } from './MobileInstallButton';
 import {
   Search,
   SlidersHorizontal,
@@ -82,6 +83,9 @@ export const MobileAppHeader: React.FC = () => {
                 <option value="Sylhet">Sylhet</option>
               </select>
             </div>
+
+            {/* Mobile PWA Install App Button */}
+            <MobileInstallButton />
 
             {/* Notification Bell */}
             <NotificationBell />

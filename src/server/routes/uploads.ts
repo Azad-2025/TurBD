@@ -235,7 +235,22 @@ uploadRouter.get('/', requireAuth, requireOwner, async (req: Request, res: Respo
     const turfId = req.query.turfId ? parseInt(req.query.turfId as string, 10) : null;
     const category = req.query.category as string;
 
-    let query = db.select().from(uploads);
+    const uploadFields = {
+      id: uploads.id,
+      uploadedBy: uploads.uploadedBy,
+      turfId: uploads.turfId,
+      category: uploads.category,
+      originalName: uploads.originalName,
+      fileName: uploads.fileName,
+      fileType: uploads.fileType,
+      fileSize: uploads.fileSize,
+      imageUrl: uploads.imageUrl,
+      thumbnailUrl: uploads.thumbnailUrl,
+      storageType: uploads.storageType,
+      createdAt: uploads.createdAt,
+    };
+
+    let query = db.select(uploadFields).from(uploads);
 
     const user = req.user!;
     let results;
@@ -244,7 +259,7 @@ uploadRouter.get('/', requireAuth, requireOwner, async (req: Request, res: Respo
       results = await query;
     } else {
       results = await db
-        .select()
+        .select(uploadFields)
         .from(uploads)
         .where(eq(uploads.uploadedBy, user.id));
     }

@@ -8,3 +8,17 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 );
+
+// Register PWA service worker early for installability and offline support
+if (typeof window !== 'undefined' && 'serviceWorker' in navigator && process.env.NODE_ENV !== 'test') {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('/sw.js')
+      .then((reg) => {
+        console.log('TurfBD Service Worker active with scope:', reg.scope);
+      })
+      .catch((err) => {
+        console.warn('Service Worker registration skipped:', err);
+      });
+  });
+}

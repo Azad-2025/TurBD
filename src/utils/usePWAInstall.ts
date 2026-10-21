@@ -127,18 +127,14 @@ export function usePWAInstall() {
 
   const platform: 'ios' | 'android' | 'desktop' = isIOS ? 'ios' : isAndroid ? 'android' : 'desktop';
 
-  // Strictly allow PWA install CTA only when:
-  // 1. On Desktop website viewport (>= 1024px)
-  // 2. Not already running in standalone PWA mode
-  // 3. Not inside the Windows Electron Desktop application
-  // 4. Not inside a native application wrapper
-  // 5. Browser has actually fired beforeinstallprompt and supports direct PWA installation
+  // Allow PWA install CTA on mobile website or desktop website when:
+  // 1. Not already running in standalone PWA / installed mode
+  // 2. Not inside the Windows Electron Desktop application
+  // 3. Not inside a native application wrapper
   const canShowInstallPrompt =
-    isDesktopViewport &&
     !isInstalled &&
     !isElectron &&
-    !isNativeApp &&
-    Boolean(deferredPrompt);
+    !isNativeApp;
 
   return {
     isInstallable: !!deferredPrompt,

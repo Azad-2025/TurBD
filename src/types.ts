@@ -306,7 +306,7 @@ export interface PayoutRequest {
   requestedAt: string;
   reviewedAt?: string | null;
   processedAt?: string | null;
-  requestedBy: number;
+  requestedBy?: number | null;
   reviewedBy?: number | null;
   processedBy?: number | null;
   rejectionReason?: string | null;

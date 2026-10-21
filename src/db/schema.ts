@@ -311,8 +311,7 @@ export const payouts = pgTable('payouts', {
   reviewedAt: timestamp('reviewed_at'),
   processedAt: timestamp('processed_at'),
   requestedBy: integer('requested_by')
-    .references(() => users.id, { onDelete: 'set null' })
-    .notNull(),
+    .references(() => users.id, { onDelete: 'set null' }),
   reviewedBy: integer('reviewed_by').references(() => users.id, { onDelete: 'set null' }),
   processedBy: integer('processed_by').references(() => users.id, { onDelete: 'set null' }),
   rejectionReason: text('rejection_reason'),

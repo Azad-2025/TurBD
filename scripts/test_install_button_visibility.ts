@@ -20,17 +20,15 @@ async function main() {
   }
 
   // -------------------------------------------------------------------------
-  // 1. MOBILE APP HEADER: COMPLETE REMOVAL OF INSTALL BUTTON
+  // 1. MOBILE APP HEADER: PROMINENT "INSTALL APP" BUTTON
   // -------------------------------------------------------------------------
-  console.log('\n--- 1. Mobile App Header: Clean Responsive Interface ---');
+  console.log('\n--- 1. Mobile App Header: Prominent "Install App" Button ---');
 
   const mobileHeaderPath = path.resolve('src/components/MobileAppHeader.tsx');
   assert(fs.existsSync(mobileHeaderPath), 'MobileAppHeader.tsx exists');
 
   const mobileHeaderCode = fs.readFileSync(mobileHeaderPath, 'utf-8');
-  assert(!mobileHeaderCode.includes('PWAInstallBanner'), 'MobileAppHeader does NOT import or render PWAInstallBanner');
-  assert(!mobileHeaderCode.includes('pwa-compact-install-btn'), 'MobileAppHeader contains no compact install button ID');
-  assert(!mobileHeaderCode.includes('Download') && !mobileHeaderCode.includes('>App<'), 'MobileAppHeader does not contain green download icon or "App" label');
+  assert(mobileHeaderCode.includes('MobileInstallButton'), 'MobileAppHeader mounts MobileInstallButton');
   assert(mobileHeaderCode.includes('mobile-city-select'), 'MobileAppHeader preserves city selector dropdown');
   assert(mobileHeaderCode.includes('NotificationBell'), 'MobileAppHeader preserves notification bell');
   assert(mobileHeaderCode.includes('mobile-header-logo-btn'), 'MobileAppHeader preserves official brand logo');
@@ -57,21 +55,14 @@ async function main() {
     'Detects native mobile app runtime wrappers (ReactNativeWebView, Capacitor)'
   );
   assert(
-    hookCode.includes("window.matchMedia('(min-width: 1024px)')") ||
-    hookCode.includes('1024'),
-    'Evaluates desktop breakpoint (>= 1024px)'
-  );
-  assert(
     hookCode.includes('canShowInstallPrompt'),
     'Exposes canShowInstallPrompt boolean gate'
   );
   assert(
-    hookCode.includes('isDesktopViewport') &&
     hookCode.includes('!isInstalled') &&
     hookCode.includes('!isElectron') &&
-    hookCode.includes('!isNativeApp') &&
-    hookCode.includes('Boolean(deferredPrompt)'),
-    'canShowInstallPrompt enforces all 5 conditions: desktop viewport, not installed, not Electron, not native app, and valid deferredPrompt'
+    hookCode.includes('!isNativeApp'),
+    'canShowInstallPrompt enforces not installed, not Electron, and not native app'
   );
 
   // -------------------------------------------------------------------------

@@ -86,8 +86,8 @@ export const ProfileView: React.FC = () => {
   const [favoriteTurfs, setFavoriteTurfs] = useState<Turf[]>([]);
   const [loadingFavorites, setLoadingFavorites] = useState(false);
 
-  // PWA Installation Hook (Desktop web only)
-  const { canShowInstallPrompt, isInstallable: isPWAInstallable, install: triggerPWAInstall, platform: pwaPlatform } = usePWAInstall();
+  // PWA Installation Hook
+  const { canShowInstallPrompt, isInstalled, isInstallable: isPWAInstallable, install: triggerPWAInstall, platform: pwaPlatform } = usePWAInstall();
   const [isPWAGuideOpen, setIsPWAGuideOpen] = useState(false);
 
   // Initialize form when currentUser changes
@@ -548,7 +548,7 @@ export const ProfileView: React.FC = () => {
                 <ChevronRight className="w-4 h-4 text-slate-400" />
               </button>
             )}
-            {/* Desktop Web PWA Install Quick Action (Strictly hidden on mobile, standalone app, Electron, or ineligible browser) */}
+            {/* PWA Install Quick Action (Hidden if already installed or inside Electron/native wrapper) */}
             {canShowInstallPrompt && (
               <button
                 onClick={async () => {
@@ -568,18 +568,40 @@ export const ProfileView: React.FC = () => {
                   </div>
                   <div>
                     <div className="text-sm font-bold text-[#0F172A] flex items-center gap-2">
-                      <span>TurfBD Desktop Web App</span>
-                      <span className="text-[10px] font-bold text-[#064E3B] bg-emerald-100 px-2 py-0.5 rounded-full">
-                        Installable
+                      <span>Install TurfBD App</span>
+                      <span className="text-[10px] font-bold text-[#064E3B] bg-emerald-100 px-2 py-0.5 rounded-full font-mono">
+                        PWA
                       </span>
                     </div>
                     <div className="text-xs text-[#64748B]">
-                      Install TurfBD to your desktop launcher for instant access
+                      Add to your device home screen for instant booking and offline access
                     </div>
                   </div>
                 </div>
                 <ChevronRight className="w-4 h-4 text-slate-400" />
               </button>
+            )}
+
+            {/* Already Installed Status Feedback */}
+            {isInstalled && (
+              <div
+                id="profile-pwa-installed-badge"
+                className="w-full px-4 py-3 flex items-center justify-between bg-emerald-50/70 border-b border-emerald-100/50"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center text-[#0FA958]">
+                    <CheckCircle2 className="w-4 h-4 text-[#0FA958]" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-[#064E3B]">
+                      TurfBD App Installed
+                    </div>
+                    <div className="text-[11px] text-emerald-700/80">
+                      Running in standalone application mode
+                    </div>
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         </>
