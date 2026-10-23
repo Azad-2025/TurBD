@@ -94,6 +94,8 @@ export interface Turf {
   openingTime: string; // e.g., "06:00"
   closingTime: string; // e.g., "02:00"
   isFeatured?: boolean;
+  isDemo?: boolean;
+  isVerified?: boolean;
   latitude: number;
   longitude: number;
   venueType: 'indoor' | 'outdoor' | 'rooftop' | 'covered';

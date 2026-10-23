@@ -1,5 +1,5 @@
 // TurfBD Service Worker - Offline Caching & PWA Support
-const CACHE_NAME = 'turfbd-cache-v2';
+const CACHE_NAME = 'turfbd-cache-v3';
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
@@ -45,8 +45,31 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(event.request.url);
 
-  // Bypass API routes and non-origin external calls (except fonts/images)
-  if (url.pathname.startsWith('/api/')) return;
+  // 1. Strict Network-First strategy for all /api/* endpoints:
+  // Dynamic turf listings, slot availability, and booking records are always fetched
+  // fresh from the backend and never served from stale offline cache.
+  if (url.pathname.startsWith('/api/')) {
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          return networkResponse;
+        })
+        .catch(async () => {
+          return new Response(
+            JSON.stringify({
+              error: 'Offline',
+              message: 'You are currently offline. Please reconnect to view live turf listings.',
+              isOffline: true,
+            }),
+            {
+              status: 503,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        })
+    );
+    return;
+  }
 
   // Stale-while-revalidate for static assets, Network-first for navigation
   if (event.request.mode === 'navigate') {

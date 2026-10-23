@@ -232,6 +232,8 @@ router.get('/', optionalAuth, async (req: Request, res: Response) => {
         rating: turfs.rating,
         reviewCount: turfs.reviewCount,
         isFeatured: turfs.isFeatured,
+        isDemo: turfs.isDemo,
+        isVerified: turfs.isVerified,
         createdAt: turfs.createdAt,
         ownerName: users.name,
         ownerPhone: users.phone,
@@ -258,6 +260,8 @@ router.get('/', optionalAuth, async (req: Request, res: Response) => {
       return {
         ...t,
         status: t.verificationStatus,
+        isVerified: Boolean(t.isVerified || t.verificationStatus === 'approved'),
+        isDemo: Boolean(t.isDemo),
         distanceKm,
         distanceFormatted,
         driveTimeMinutes,
@@ -456,6 +460,8 @@ router.get('/:id', optionalAuth, async (req: Request, res: Response) => {
         rating: turfs.rating,
         reviewCount: turfs.reviewCount,
         isFeatured: turfs.isFeatured,
+        isDemo: turfs.isDemo,
+        isVerified: turfs.isVerified,
         createdAt: turfs.createdAt,
         ownerName: users.name,
         ownerPhone: users.phone,
@@ -497,6 +503,8 @@ router.get('/:id', optionalAuth, async (req: Request, res: Response) => {
     return res.json({
       ...turf,
       status: turf.verificationStatus,
+      isVerified: Boolean(turf.isVerified || turf.verificationStatus === 'approved'),
+      isDemo: Boolean(turf.isDemo),
       reviews: turfReviews,
     });
   } catch (error: any) {

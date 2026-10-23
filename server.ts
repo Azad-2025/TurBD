@@ -17,6 +17,8 @@ import realtimeRouter from './src/server/routes/realtime.ts';
 import aiRouter from './src/server/routes/ai.ts';
 import notificationsRouter from './src/server/routes/notifications.ts';
 import invoicesRouter from './src/server/routes/invoices.ts';
+import adminRouter from './src/server/routes/admin.ts';
+import { autoSeedDatabase } from './src/server/services/autoSeedService.ts';
 
 // Load environment variables
 dotenv.config();
@@ -103,6 +105,7 @@ async function startServer() {
   app.use('/api/ai', aiRouter);
   app.use('/api/notifications', notificationsRouter);
   app.use('/api/invoices', invoicesRouter);
+  app.use('/api/admin', adminRouter);
 
   // Generic OAuth callback fallback
   app.get(['/auth/callback', '/auth/callback/'], (req, res) => {
@@ -128,6 +131,13 @@ async function startServer() {
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
+  }
+
+  // Idempotent database auto-seeding before serving traffic
+  try {
+    await autoSeedDatabase();
+  } catch (seedErr) {
+    console.warn('[Server Startup] Auto-seed check finished with notice:', seedErr);
   }
 
   app.listen(PORT, '0.0.0.0', () => {

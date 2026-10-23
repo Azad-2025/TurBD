@@ -537,6 +537,8 @@ export const api = {
       openingTime: t.openingTime || '06:00',
       closingTime: t.closingTime || '02:00',
       isFeatured: Boolean(t.isFeatured),
+      isDemo: Boolean(t.isDemo),
+      isVerified: Boolean(t.isVerified !== undefined ? t.isVerified : t.verificationStatus === 'approved'),
       latitude: Number(t.latitude || 23.8103),
       longitude: Number(t.longitude || 90.4125),
       venueType: (t.venueType || 'outdoor') as any,
@@ -1033,6 +1035,36 @@ export const api = {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Failed to fetch admin reports');
     }
+    return res.json();
+  },
+
+  // Super Admin Demo Management
+  async removeDemoTurfs(): Promise<{
+    success: boolean;
+    message: string;
+    removedCount: number;
+    removedTurfs: { id: number; name: string; city: string; area: string }[];
+  }> {
+    const res = await fetch(`${API_BASE}/admin/remove-demo-turfs`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(true),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || err.message || 'Failed to remove demo turfs');
+    }
+    return res.json();
+  },
+
+  async getDemoTurfsStatus(): Promise<{
+    success: boolean;
+    demoCount: number;
+    demoTurfs: any[];
+  }> {
+    const res = await fetch(`${API_BASE}/admin/demo-turfs-status`, {
+      headers: getAuthHeaders(false),
+    });
+    if (!res.ok) return { success: false, demoCount: 0, demoTurfs: [] };
     return res.json();
   },
 

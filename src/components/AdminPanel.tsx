@@ -139,8 +139,38 @@ export const AdminPanel: React.FC = () => {
     updateTurf(turf.id, { isFeatured: !turf.isFeatured });
   };
 
+  const [removingDemo, setRemovingDemo] = useState(false);
+  const [demoRemovalMsg, setDemoRemovalMsg] = useState<string | null>(null);
+
+  const handleRemoveDemoTurfs = async () => {
+    if (!window.confirm('Are you sure you want to remove all demo turfs? This will permanently delete records marked isDemo: true, while leaving authentic venues, users, and financial records untouched.')) {
+      return;
+    }
+    setRemovingDemo(true);
+    setDemoRemovalMsg(null);
+    try {
+      const res = await api.removeDemoTurfs();
+      setDemoRemovalMsg(res.message);
+      setTimeout(() => {
+        window.location.reload();
+      }, 1200);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to remove demo turfs');
+    } finally {
+      setRemovingDemo(false);
+    }
+  };
+
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 text-[#0F172A]" id="admin-panel-page">
+      {/* Demo Removal Toast / Banner */}
+      {demoRemovalMsg && (
+        <div className="mb-4 p-4 bg-emerald-50 border border-emerald-200 text-[#064E3B] rounded-2xl text-xs font-bold flex items-center justify-between">
+          <span>{demoRemovalMsg}</span>
+          <button onClick={() => setDemoRemovalMsg(null)} className="text-[#064E3B] hover:opacity-80">✕</button>
+        </div>
+      )}
+
       {/* Admin Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 bg-white p-6 rounded-2xl border border-slate-200 shadow-card">
         <div>
@@ -165,6 +195,19 @@ export const AdminPanel: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {currentUser?.isSuperAdmin && (
+            <button
+              onClick={handleRemoveDemoTurfs}
+              disabled={removingDemo}
+              className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Delete only records where isDemo: true, preserving authentic data"
+              id="admin-remove-demo-turfs-btn"
+            >
+              <XCircle className="w-3.5 h-3.5" />
+              <span>{removingDemo ? 'Removing...' : 'Remove Demo Turfs'}</span>
+            </button>
+          )}
+
           {/* Live Status Pills */}
           <div className="flex items-center gap-2 px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[11px] font-medium text-slate-700">
             <span className="flex items-center gap-1.5 text-[#064E3B] font-semibold">

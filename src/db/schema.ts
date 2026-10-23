@@ -128,6 +128,8 @@ export const turfs = pgTable('turfs', {
   rating: doublePrecision('rating').default(4.8).notNull(),
   reviewCount: integer('review_count').default(18).notNull(),
   isFeatured: boolean('is_featured').default(false).notNull(),
+  isDemo: boolean('is_demo').default(false).notNull(),
+  isVerified: boolean('is_verified').default(false).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
