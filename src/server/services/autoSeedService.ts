@@ -4,28 +4,47 @@ import { users, turfs, slots } from '../../db/schema.ts';
 import { sql, eq } from 'drizzle-orm';
 
 /**
+ * Safely ensures newly required columns exist on the PostgreSQL turfs table.
+ * Render Free Tier does not provide shell access to run manual migrations,
+ * so this raw SQL check runs automatically on server startup.
+ */
+export async function ensureTurfSchemaColumns(): Promise<void> {
+  try {
+    await db.execute(sql`ALTER TABLE turfs ADD COLUMN IF NOT EXISTS is_demo BOOLEAN DEFAULT FALSE;`);
+    await db.execute(sql`ALTER TABLE turfs ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE;`);
+    console.log('[AutoSeed] Verified/added is_demo and is_verified columns in PostgreSQL turfs table.');
+  } catch (error: any) {
+    console.warn('[AutoSeed] Notice ensuring schema columns via ALTER TABLE:', error?.message || error);
+  }
+}
+
+/**
  * Idempotent database auto-seeder for TurfBD.
  *
  * Runs during server startup (e.g., on Render Free Tier where manual shell access is unavailable).
- * Checks if the 'turfs' table is empty.
- * If empty: safely inserts initial demo venues (Daffodil Turf Arena, Gulshan United Arena)
- * with isDemo: true, isVerified: true, and verificationStatus: 'approved', plus initial match slots.
- * If records already exist: skips completely to preserve authentic customer/owner data.
+ * 1. Checks/ensures missing PostgreSQL columns (is_demo, is_verified) exist via ALTER TABLE.
+ * 2. Checks if the 'turfs' table is empty.
+ * 3. If empty: safely inserts initial demo venues (Daffodil Turf Arena, Gulshan United Arena)
+ *    with isDemo: true, isVerified: true, and verificationStatus: 'approved', plus initial match slots.
+ * 4. If records already exist: skips completely to preserve authentic customer/owner data.
  */
 export async function autoSeedDatabase(): Promise<{ seeded: boolean; count: number }> {
   try {
-    // 1. Check if turfs table already contains any venues
+    // 1. Ensure required PostgreSQL columns exist before any queries are run
+    await ensureTurfSchemaColumns();
+
+    // 2. Check if turfs table already contains any venues
     const [countResult] = await db.select({ count: sql<number>`count(*)` }).from(turfs);
     const existingTurfCount = Number(countResult?.count || 0);
 
     if (existingTurfCount > 0) {
-      console.log(`[AutoSeed] Turfs table already contains ${existingTurfCount} record(s). Skipping auto-seed.`);
+      console.log(`[AutoSeed] Turfs table already contains ${existingTurfCount} record(s). Skipping auto-seed to preserve data.`);
       return { seeded: false, count: existingTurfCount };
     }
 
     console.log('[AutoSeed] Turfs table is empty. Starting idempotent initial demo seeding...');
 
-    // 2. Ensure initial Super Admin and Venue Owner accounts exist
+    // 3. Ensure initial Super Admin and Venue Owner accounts exist
     const salt = await bcrypt.genSalt(10);
     const defaultPasswordHash = await bcrypt.hash('Password123!', salt);
 
@@ -69,7 +88,7 @@ export async function autoSeedDatabase(): Promise<{ seeded: boolean; count: numb
       ownerId = existingOwner.id;
     }
 
-    // 3. Define initial demo turfs
+    // 4. Define initial demo turfs
     const demoTurfDefinitions = [
       {
         turfName: 'Daffodil Turf Arena',
@@ -135,7 +154,7 @@ export async function autoSeedDatabase(): Promise<{ seeded: boolean; count: numb
       },
     ];
 
-    // 4. Insert initial demo turfs and generate initial slots
+    // 5. Insert initial demo turfs and generate initial slots
     let insertedCount = 0;
     const today = new Date().toISOString().split('T')[0];
     const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
@@ -143,21 +162,44 @@ export async function autoSeedDatabase(): Promise<{ seeded: boolean; count: numb
     const slotHours = ['08:00', '10:00', '16:00', '18:00', '20:00', '22:00'];
 
     for (const turfData of demoTurfDefinitions) {
-      const [insertedTurf] = await db.insert(turfs).values(turfData).returning();
+      let insertedTurf: any;
+      try {
+        const [res] = await db.insert(turfs).values(turfData).returning();
+        insertedTurf = res;
+      } catch (insertError: any) {
+        console.error(`[AutoSeed] Direct insert with isDemo/isVerified failed for ${turfData.turfName}:`, insertError?.message || insertError);
+        console.log('[AutoSeed] Re-verifying column structure and retrying...');
+        await ensureTurfSchemaColumns();
+
+        try {
+          const [retryRes] = await db.insert(turfs).values(turfData).returning();
+          insertedTurf = retryRes;
+        } catch (retryError: any) {
+          console.warn('[AutoSeed] Retrying insert with base attributes:', retryError?.message || retryError);
+          const { isDemo, isVerified, ...baseTurfData } = turfData;
+          const [fallbackRes] = await db.insert(turfs).values(baseTurfData as any).returning();
+          insertedTurf = fallbackRes;
+        }
+      }
+
       insertedCount++;
-      console.log(`   + [AutoSeed] Inserted demo turf: ${insertedTurf.turfName} (ID: ${insertedTurf.id}, isDemo: true, status: approved)`);
+      console.log(`   + [AutoSeed] Inserted demo turf: ${insertedTurf.turfName} (ID: ${insertedTurf.id}, verificationStatus: ${insertedTurf.verificationStatus || 'approved'})`);
 
       // Seed slots for this demo venue
       for (const d of targetDates) {
         for (const h of slotHours) {
           const nextHour = (parseInt(h.slice(0, 2), 10) + 1).toString().padStart(2, '0');
-          await db.insert(slots).values({
-            turfId: insertedTurf.id,
-            date: d,
-            startTime: h,
-            endTime: `${nextHour}:00`,
-            status: 'available',
-          });
+          try {
+            await db.insert(slots).values({
+              turfId: insertedTurf.id,
+              date: d,
+              startTime: h,
+              endTime: `${nextHour}:00`,
+              status: 'available',
+            });
+          } catch (slotErr: any) {
+            console.warn(`[AutoSeed] Slot insert warning for turf ${insertedTurf.id} (${d} ${h}):`, slotErr?.message || slotErr);
+          }
         }
       }
     }
@@ -166,6 +208,9 @@ export async function autoSeedDatabase(): Promise<{ seeded: boolean; count: numb
     return { seeded: true, count: insertedCount };
   } catch (error: any) {
     console.error('[AutoSeed] Error during auto-seed routine:', error?.message || error);
+    if (error?.stack) {
+      console.error('[AutoSeed] Stack trace:', error.stack);
+    }
     return { seeded: false, count: 0 };
   }
 }

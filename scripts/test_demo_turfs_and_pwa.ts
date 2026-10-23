@@ -66,6 +66,9 @@ async function runTests() {
     // 5. Test AutoSeed Service
     console.log('\n--- 5. AutoSeed Service Definition Audit ---');
     const autoSeedService = fs.readFileSync(path.join(process.cwd(), 'src', 'server', 'services', 'autoSeedService.ts'), 'utf-8');
+    assert(autoSeedService.includes('ensureTurfSchemaColumns'), 'AutoSeed defines ensureTurfSchemaColumns helper');
+    assert(autoSeedService.includes('ALTER TABLE turfs ADD COLUMN IF NOT EXISTS is_demo'), 'AutoSeed executes raw SQL to safely add is_demo column');
+    assert(autoSeedService.includes('ALTER TABLE turfs ADD COLUMN IF NOT EXISTS is_verified'), 'AutoSeed executes raw SQL to safely add is_verified column');
     assert(autoSeedService.includes('Daffodil Turf Arena'), 'AutoSeed defines Daffodil Turf Arena in Dhanmondi');
     assert(autoSeedService.includes('Gulshan United Arena'), 'AutoSeed defines Gulshan United Arena in Gulshan');
     assert(autoSeedService.includes('isDemo: true'), 'AutoSeed sets isDemo: true on initial demo venues');
