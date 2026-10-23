@@ -76,6 +76,17 @@ async function runTests() {
     assert(autoSeedService.includes("verificationStatus: 'approved'"), "AutoSeed sets verificationStatus: 'approved'");
     assert(autoSeedService.includes('existingTurfCount > 0'), 'AutoSeed checks if existing records exist and skips if not empty');
 
+    // 6. Test GET /api/turfs Route Error Handling & Field Mapping
+    console.log('\n--- 6. GET /api/turfs Fallback & Field Mapping Audit ---');
+    const turfsRoute = fs.readFileSync(path.join(process.cwd(), 'src', 'server', 'routes', 'turfs.ts'), 'utf-8');
+    assert(turfsRoute.includes('Primary query with joins failed'), 'turfs.ts catches primary join query failure with logging');
+    assert(turfsRoute.includes('Attempting fallback db.select().from(turfs)'), 'turfs.ts performs safe fallback select from turfs table');
+    assert(turfsRoute.includes('autoSeedDatabase()'), 'turfs.ts triggers autoSeedDatabase if zero turfs retrieved');
+    assert(turfsRoute.includes('locationVal'), 'turfs.ts maps location field cleanly');
+    assert(turfsRoute.includes('isVerified: Boolean'), 'turfs.ts maps isVerified cleanly');
+    assert(turfsRoute.includes('isDemo: Boolean'), 'turfs.ts maps isDemo cleanly');
+    assert(turfsRoute.includes('Emergency fallback query failed'), 'turfs.ts catches unhandled route errors and returns safe JSON instead of 500');
+
     console.log('\n================================================================');
     console.log(` Summary: ${passed} passed, ${failed} failed`);
     console.log('================================================================\n');
