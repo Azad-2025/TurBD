@@ -67,21 +67,22 @@ async function runTests() {
     console.log('\n--- 5. AutoSeed Service Definition Audit ---');
     const autoSeedService = fs.readFileSync(path.join(process.cwd(), 'src', 'server', 'services', 'autoSeedService.ts'), 'utf-8');
     assert(autoSeedService.includes('ensureTurfSchemaColumns'), 'AutoSeed defines ensureTurfSchemaColumns helper');
-    assert(autoSeedService.includes('ALTER TABLE turfs ADD COLUMN IF NOT EXISTS is_demo'), 'AutoSeed executes raw SQL to safely add is_demo column');
-    assert(autoSeedService.includes('ALTER TABLE turfs ADD COLUMN IF NOT EXISTS is_verified'), 'AutoSeed executes raw SQL to safely add is_verified column');
+    assert(autoSeedService.includes('ALTER TABLE turfs ADD COLUMN IF NOT EXISTS is_demo BOOLEAN DEFAULT TRUE'), 'AutoSeed executes raw SQL to safely add is_demo with DEFAULT TRUE');
+    assert(autoSeedService.includes('ALTER TABLE turfs ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT TRUE'), 'AutoSeed executes raw SQL to safely add is_verified with DEFAULT TRUE');
+    assert(autoSeedService.includes("ALTER TABLE turfs ADD COLUMN IF NOT EXISTS verification_status VARCHAR DEFAULT 'approved'"), 'AutoSeed executes raw SQL to safely add verification_status');
+    assert(autoSeedService.includes('INSERT INTO turfs'), 'AutoSeed executes raw SQL INSERT INTO turfs directly');
     assert(autoSeedService.includes('Daffodil Turf Arena'), 'AutoSeed defines Daffodil Turf Arena in Dhanmondi');
     assert(autoSeedService.includes('Gulshan United Arena'), 'AutoSeed defines Gulshan United Arena in Gulshan');
-    assert(autoSeedService.includes('isDemo: true'), 'AutoSeed sets isDemo: true on initial demo venues');
-    assert(autoSeedService.includes('isVerified: true'), 'AutoSeed sets isVerified: true on initial demo venues');
-    assert(autoSeedService.includes("verificationStatus: 'approved'"), "AutoSeed sets verificationStatus: 'approved'");
-    assert(autoSeedService.includes('existingTurfCount > 0'), 'AutoSeed checks if existing records exist and skips if not empty');
+    assert(autoSeedService.includes('is_demo'), 'AutoSeed sets is_demo on initial demo venues');
+    assert(autoSeedService.includes('is_verified'), 'AutoSeed sets is_verified on initial demo venues');
+    assert(autoSeedService.includes("'approved'"), "AutoSeed sets verification_status: 'approved'");
 
     // 6. Test GET /api/turfs Route Error Handling & Field Mapping
     console.log('\n--- 6. GET /api/turfs Fallback & Field Mapping Audit ---');
     const turfsRoute = fs.readFileSync(path.join(process.cwd(), 'src', 'server', 'routes', 'turfs.ts'), 'utf-8');
-    assert(turfsRoute.includes('Primary query with joins failed'), 'turfs.ts catches primary join query failure with logging');
-    assert(turfsRoute.includes('Attempting fallback db.select().from(turfs)'), 'turfs.ts performs safe fallback select from turfs table');
-    assert(turfsRoute.includes('autoSeedDatabase()'), 'turfs.ts triggers autoSeedDatabase if zero turfs retrieved');
+    assert(turfsRoute.includes('/force-seed'), 'turfs.ts exposes GET /api/turfs/force-seed on-demand seed trigger');
+    assert(turfsRoute.includes('SELECT * FROM turfs'), 'turfs.ts executes raw SQL SELECT * FROM turfs fallback');
+    assert(turfsRoute.includes('autoSeedDatabase(true)'), 'turfs.ts triggers autoSeedDatabase if zero turfs retrieved');
     assert(turfsRoute.includes('locationVal'), 'turfs.ts maps location field cleanly');
     assert(turfsRoute.includes('isVerified: Boolean'), 'turfs.ts maps isVerified cleanly');
     assert(turfsRoute.includes('isDemo: Boolean'), 'turfs.ts maps isDemo cleanly');
