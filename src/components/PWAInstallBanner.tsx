@@ -45,14 +45,15 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({ compact = fa
   }
 
   const handleInstallClick = async () => {
-    if (isInstallable) {
+    const hasPrompt = isInstallable || (typeof window !== 'undefined' && Boolean(window.deferredPWAInstallPrompt));
+    if (hasPrompt) {
       const res = await install();
       if (res.outcome === 'manual') {
         setShowGuideModal(true);
       }
-    } else {
-      setShowGuideModal(true);
+      return;
     }
+    setShowGuideModal(true);
   };
 
   if (compact) {

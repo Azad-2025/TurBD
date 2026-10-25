@@ -23,17 +23,26 @@ export const MobileInstallButton: React.FC = () => {
   }
 
   const handleInstallClick = async () => {
+    const hasPrompt = isInstallable || (typeof window !== 'undefined' && Boolean(window.deferredPWAInstallPrompt));
+
     // Android / Chromium browsers with active beforeinstallprompt
-    if (isInstallable) {
+    if (hasPrompt) {
       const res = await install();
       if (res.outcome === 'manual') {
-        setShowGuideModal(true);
+        if (isIOS) {
+          setShowIOSModal(true);
+        } else {
+          setShowGuideModal(true);
+        }
       }
-    } else if (isIOS) {
+      return;
+    }
+
+    if (isIOS) {
       // iPhone / iPad Safari: Show Apple Add to Home Screen guide
       setShowIOSModal(true);
     } else {
-      // Other browsers (Firefox, older WebView, etc.)
+      // Other browsers without native prompt support
       setShowGuideModal(true);
     }
   };

@@ -37,7 +37,7 @@ export const PWAInstallGuideModal: React.FC<PWAInstallGuideModalProps> = ({
     setTryingPrompt(true);
     const res = await install();
     setTryingPrompt(false);
-    if (res.outcome === 'accepted') {
+    if (res.outcome === 'accepted' || res.outcome === 'dismissed') {
       onClose();
     }
   };
