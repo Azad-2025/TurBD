@@ -33,6 +33,28 @@ export interface User {
   createdAt: string;
 }
 
+export interface AdminDashboardStats {
+  activeTurfs: number;
+  totalTurfs: number;
+  pendingTurfsCount: number;
+  demoTurfsCount: number;
+  activeUsers: number;
+  totalOwners: number;
+  pendingOwnersCount: number;
+  newUsersToday: number;
+  todayBookings: number;
+  todayConfirmedBookings: number;
+  todayConfirmationRate: number;
+  gmvToday: number;
+  platformRevenueToday: number;
+  totalVolume: number;
+  totalPlatformRevenue: number;
+  activeEscrow: number;
+  citiesCount: number;
+  topOperatingDistrict: string;
+  lastSyncedAt?: string;
+}
+
 export type SportType = 'football' | 'cricket' | 'badminton' | 'futsal';
 export type VenueType = 'all' | 'indoor' | 'outdoor' | 'rooftop' | 'covered';
 export type VerifiedBadgeTier = 'standard' | 'turfbd_verified' | 'gold_partner';

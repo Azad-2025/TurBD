@@ -33,6 +33,7 @@
     "test:super-admins": "tsx scripts/test_hardcoded_super_admins.ts",
     "test:admin-guard": "tsx scripts/test_admin_panel_super_admin_guard.ts",
     "test:pwa-white-icon": "tsx scripts/test_pwa_white_icon_and_manifest.ts",
+    "test:pending-and-stats": "tsx scripts/test_admin_pending_and_stats.ts",
     "desktop:build": "npm run build && echo 'Desktop bundle ready in dist/'"
   },
   "dependencies": {

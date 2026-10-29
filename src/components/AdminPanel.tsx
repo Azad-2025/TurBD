@@ -23,7 +23,7 @@ import {
   Radio,
   Activity,
 } from 'lucide-react';
-import { Turf, Booking, UserRole } from '../types';
+import { Turf, Booking, UserRole, AdminDashboardStats } from '../types';
 import { BookingDetailsModal } from './BookingDetailsModal';
 import { CommandCenterView } from './admin/CommandCenterView';
 import { OwnerVerificationView } from './admin/OwnerVerificationView';
@@ -83,6 +83,27 @@ export const AdminPanel: React.FC = () => {
   const [bookingSearchQuery, setBookingSearchQuery] = useState<string>('');
   const [selectedBookingForDetails, setSelectedBookingForDetails] = useState<Booking | null>(null);
 
+  const [dashboardStats, setDashboardStats] = useState<AdminDashboardStats | null>(null);
+  const [dedicatedPendingTurfs, setDedicatedPendingTurfs] = useState<Turf[]>([]);
+  const [loadingPending, setLoadingPending] = useState(false);
+
+  const loadAdminData = async () => {
+    try {
+      const [statsRes, pendingRes] = await Promise.allSettled([
+        api.getAdminDashboardStats(),
+        api.getAdminPendingTurfs(),
+      ]);
+      if (statsRes.status === 'fulfilled') setDashboardStats(statsRes.value);
+      if (pendingRes.status === 'fulfilled') setDedicatedPendingTurfs(pendingRes.value);
+    } catch (e) {
+      console.warn('Admin background sync notice:', e);
+    }
+  };
+
+  useEffect(() => {
+    loadAdminData();
+  }, []);
+
   useEffect(() => {
     if (activeTab === 'reports') {
       setLoadingReport(true);
@@ -90,18 +111,27 @@ export const AdminPanel: React.FC = () => {
         .then((data) => setReportData(data))
         .catch((err) => console.error('Failed to load reports:', err))
         .finally(() => setLoadingReport(false));
+    } else if (activeTab === 'pending-turfs' || activeTab === 'command-center') {
+      loadAdminData();
     }
   }, [activeTab]);
 
-  // Pending approval queue
-  const pendingTurfs = turfs.filter((t) => t.status === 'pending');
-  const approvedTurfs = turfs.filter((t) => t.status === 'approved');
+  // Seamless merge of pending venues from dedicated API and context
+  const pendingMap = new Map<string, Turf>();
+  dedicatedPendingTurfs.forEach((t) => pendingMap.set(String(t.id), t));
+  turfs
+    .filter((t) => t.status === 'pending' || t.verificationStatus === 'pending' || !t.isVerified)
+    .forEach((t) => {
+      if (!pendingMap.has(String(t.id))) pendingMap.set(String(t.id), t);
+    });
+  const pendingTurfs = Array.from(pendingMap.values());
+  const approvedTurfs = turfs.filter((t) => t.status === 'approved' || t.verificationStatus === 'approved');
 
-  // Overall platform metrics
-  const totalVolume = bookings
+  // Overall platform metrics from live DB aggregations or fallback
+  const totalVolume = dashboardStats?.totalVolume ?? bookings
     .filter((b) => b.status !== 'cancelled')
     .reduce((acc, b) => acc + b.totalAmount, 0);
-  const platformFeeCommission = Math.round(totalVolume * 0.05);
+  const platformFeeCommission = dashboardStats?.totalPlatformRevenue ?? Math.round(totalVolume * 0.05);
 
   // Turf moderation modal state
   const [moderationModalTurf, setModerationModalTurf] = useState<Turf | null>(null);
@@ -109,8 +139,15 @@ export const AdminPanel: React.FC = () => {
   const [moderationReason, setModerationReason] = useState<string>('');
   const [moderationError, setModerationError] = useState<string | null>(null);
 
-  const handleApprove = (turfId: string) => {
+  const handleApprove = async (turfId: string) => {
+    try {
+      await api.approveAdminPendingTurf(turfId);
+    } catch {
+      await setTurfStatus(turfId, 'approved');
+    }
+    setDedicatedPendingTurfs((prev) => prev.filter((t) => String(t.id) !== String(turfId)));
     setTurfStatus(turfId, 'approved');
+    loadAdminData();
   };
 
   const handleOpenRejectModal = (turf: Turf) => {
@@ -134,8 +171,18 @@ export const AdminPanel: React.FC = () => {
       return;
     }
     const targetStatus = moderationModalAction === 'reject' ? 'rejected' : 'suspended';
-    await setTurfStatus(moderationModalTurf.id, targetStatus, moderationReason.trim());
+    try {
+      if (moderationModalAction === 'reject') {
+        await api.rejectAdminPendingTurf(moderationModalTurf.id, moderationReason.trim());
+      } else {
+        await setTurfStatus(moderationModalTurf.id, targetStatus, moderationReason.trim());
+      }
+    } catch {
+      await setTurfStatus(moderationModalTurf.id, targetStatus, moderationReason.trim());
+    }
+    setDedicatedPendingTurfs((prev) => prev.filter((t) => String(t.id) !== String(moderationModalTurf.id)));
     setModerationModalTurf(null);
+    loadAdminData();
   };
 
   const handleToggleFeature = (turf: Turf) => {
@@ -336,7 +383,12 @@ export const AdminPanel: React.FC = () => {
 
       {/* COMMAND CENTER TAB */}
       {activeTab === 'command-center' && (
-        <CommandCenterView onNavigateToTab={(tab: any) => setActiveTab(tab)} />
+        <CommandCenterView
+          onNavigateToTab={(tab: any) => setActiveTab(tab)}
+          stats={dashboardStats}
+          onRefresh={loadAdminData}
+          pendingTurfsCount={pendingTurfs.length}
+        />
       )}
 
       {/* Platform Analytics Cards (Shown when not on main command center) */}

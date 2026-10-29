@@ -218,7 +218,7 @@ router.get('/', optionalAuth, async (req: Request, res: Response) => {
     } = req.query;
 
     const user = req.user;
-    const isAdmin = user?.role === 'admin';
+    const isAdmin = user?.role === 'admin' || user?.role === 'super_admin' || Boolean((user as any)?.isSuperAdmin);
     const isOwner = user?.role === 'owner';
     const targetOwnerId = ownerId ? Number(ownerId) : undefined;
     const isOwnerScope = scope === 'owner' || targetOwnerId !== undefined;
@@ -837,7 +837,8 @@ router.patch('/:id', requireOwner, async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Turf not found' });
     }
 
-    if (req.user!.role !== 'admin' && existing.ownerId !== req.user!.id) {
+    const isPlatformAdmin = req.user!.role === 'admin' || req.user!.role === 'super_admin' || Boolean((req.user as any)?.isSuperAdmin);
+    if (!isPlatformAdmin && existing.ownerId !== req.user!.id) {
       return res.status(403).json({ error: 'Forbidden: You can only manage your own turf' });
     }
 
@@ -890,7 +891,6 @@ router.patch('/:id', requireOwner, async (req: Request, res: Response) => {
     
     // Only admin or super_admin can change verification status & verified badge tier
     let statusChanged = false;
-    const isPlatformAdmin = req.user!.role === 'admin' || req.user!.role === 'super_admin';
     if (req.body.verificationStatus !== undefined && isPlatformAdmin) {
       const newStatus = req.body.verificationStatus;
       if (!['pending', 'approved', 'rejected', 'suspended'].includes(newStatus)) {
@@ -1332,7 +1332,8 @@ router.delete('/:id', requireOwner, async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Turf not found' });
     }
 
-    if (req.user!.role !== 'admin' && existing.ownerId !== req.user!.id) {
+    const isPlatformAdmin = req.user!.role === 'admin' || req.user!.role === 'super_admin' || Boolean((req.user as any)?.isSuperAdmin);
+    if (!isPlatformAdmin && existing.ownerId !== req.user!.id) {
       return res.status(403).json({ error: 'Forbidden: You can only delete your own turf' });
     }
 

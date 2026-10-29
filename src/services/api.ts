@@ -1,4 +1,4 @@
-import { Turf, Booking, Review, User, UserRole, SportType, AppNotification } from '../types';
+import { Turf, Booking, Review, User, UserRole, SportType, AppNotification, AdminDashboardStats } from '../types';
 
 const API_BASE = '/api';
 
@@ -1764,6 +1764,87 @@ export const api = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Failed to update venue badge');
+    }
+    return res.json();
+  },
+
+  // Super Admin Live Dashboard & Pending Queue API
+  async getAdminDashboardStats(): Promise<AdminDashboardStats> {
+    const res = await fetch(`${API_BASE}/admin/dashboard-stats`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to fetch admin dashboard statistics');
+    }
+    return res.json();
+  },
+
+  async getAdminPendingTurfs(): Promise<Turf[]> {
+    const res = await fetch(`${API_BASE}/admin/pending-turfs`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to fetch pending turfs queue');
+    }
+    const data = await res.json();
+    return (data || []).map((t: any) => ({
+      id: String(t.id),
+      name: t.name || t.turfName,
+      tagline: `Premier arena in ${t.address}`,
+      description: t.description || '',
+      city: t.city,
+      area: t.area || t.city,
+      address: t.address,
+      sports: Array.isArray(t.sports) ? t.sports : ['football'],
+      size: t.size || '7 vs 7 & Box Cricket',
+      surface: t.surface || '50mm Synthetic Turf',
+      hourlyRate: Number(t.hourlyRate || 1500),
+      dayPricePerHour: t.dayPricePerHour ? Number(t.dayPricePerHour) : undefined,
+      nightPricePerHour: t.nightPricePerHour ? Number(t.nightPricePerHour) : undefined,
+      images: Array.isArray(t.images) && t.images.length > 0 ? t.images : [],
+      amenities: Array.isArray(t.amenities) ? t.amenities : [],
+      status: t.status || t.verificationStatus || 'pending',
+      verificationStatus: t.verificationStatus || t.status || 'pending',
+      rejectionReason: t.rejectionReason,
+      suspensionReason: t.suspensionReason,
+      ownerId: String(t.ownerId),
+      ownerName: t.ownerName || 'Unknown Owner',
+      ownerPhone: t.ownerPhone || '',
+      ownerEmail: t.ownerEmail || '',
+      rating: 5.0,
+      reviewCount: 0,
+      openingTime: '06:00',
+      closingTime: '02:00',
+      latitude: 23.8103,
+      longitude: 90.4125,
+      isVerified: Boolean(t.isVerified),
+      createdAt: t.createdAt,
+    }));
+  },
+
+  async approveAdminPendingTurf(turfId: number | string): Promise<{ success: boolean; message: string; turf: any }> {
+    const res = await fetch(`${API_BASE}/admin/pending-turfs/${turfId}/approve`, {
+      method: 'PATCH',
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to approve turf');
+    }
+    return res.json();
+  },
+
+  async rejectAdminPendingTurf(turfId: number | string, reason: string): Promise<{ success: boolean; message: string; turf: any }> {
+    const res = await fetch(`${API_BASE}/admin/pending-turfs/${turfId}/reject`, {
+      method: 'PATCH',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ reason }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to reject turf');
     }
     return res.json();
   },
