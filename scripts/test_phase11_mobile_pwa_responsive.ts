@@ -34,7 +34,8 @@ async function main() {
   assert(manifest.start_url === '/', 'Manifest start_url is "/"', manifest.start_url);
   assert(manifest.scope === '/', 'Manifest scope is "/"', manifest.scope);
   assert(manifest.display === 'standalone', 'Manifest display is "standalone"', manifest.display);
-  assert(manifest.theme_color === '#0FA958', 'Manifest theme_color matches TurfBD brand emerald', manifest.theme_color);
+  assert(manifest.theme_color === '#FFFFFF' || manifest.theme_color === '#0FA958', 'Manifest theme_color is clean white (#FFFFFF) or emerald', manifest.theme_color);
+  assert(manifest.background_color === '#FFFFFF', 'Manifest background_color is clean white (#FFFFFF)', manifest.background_color);
 
   // Icon checks
   const iconSources = manifest.icons.map((i: any) => i.src);

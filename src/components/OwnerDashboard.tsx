@@ -63,7 +63,11 @@ export const OwnerDashboard: React.FC = () => {
   } = useApp();
 
   // Strict Turf Owner / Admin Access Guard
-  const isOwner = currentUser?.role === 'owner' || currentUser?.role === 'admin';
+  const isOwner =
+    currentUser?.role === 'owner' ||
+    currentUser?.role === 'admin' ||
+    currentUser?.role === 'super_admin' ||
+    Boolean(currentUser?.isSuperAdmin);
 
   if (!currentUser || !isOwner) {
     return (
@@ -96,7 +100,11 @@ export const OwnerDashboard: React.FC = () => {
 
   // Filter turfs owned by this owner
   const ownerTurfs = turfs.filter(
-    (t) => t.ownerId === currentUser?.id || currentUser?.role === 'admin'
+    (t) =>
+      t.ownerId === currentUser?.id ||
+      currentUser?.role === 'admin' ||
+      currentUser?.role === 'super_admin' ||
+      Boolean(currentUser?.isSuperAdmin)
   );
 
   const [activeTab, setActiveTab] = useState<'overview' | 'turfs' | 'bookings' | 'slots' | 'payments'>('overview');

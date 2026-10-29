@@ -7,8 +7,8 @@
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "theme_color": "#0FA958",
-  "background_color": "#F7FAF8",
+  "theme_color": "#FFFFFF",
+  "background_color": "#FFFFFF",
   "categories": ["sports", "booking", "lifestyle"],
   "icons": [
     {

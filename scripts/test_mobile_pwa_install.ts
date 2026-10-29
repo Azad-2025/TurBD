@@ -162,7 +162,8 @@ async function main() {
     manifest.id === '/' &&
       manifest.start_url === '/' &&
       manifest.display === 'standalone' &&
-      manifest.theme_color === '#0FA958',
+      (manifest.theme_color === '#FFFFFF' || manifest.theme_color === '#0FA958') &&
+      manifest.background_color === '#FFFFFF',
     'Manifest metadata valid'
   );
 

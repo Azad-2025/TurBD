@@ -50,7 +50,10 @@ export const AdminPanel: React.FC = () => {
   const [loadingReport, setLoadingReport] = useState(false);
 
   // Strict Super Admin Access Guard
-  if (!currentUser || currentUser.role !== 'admin') {
+  const isSuperAdmin = currentUser?.role === 'super_admin' || Boolean(currentUser?.isSuperAdmin);
+  const isAuthorizedAdmin = Boolean(currentUser) && (isSuperAdmin || currentUser?.role === 'admin');
+
+  if (!isAuthorizedAdmin) {
     return (
       <div className="max-w-xl mx-auto px-4 py-20 text-center" id="admin-access-denied">
         <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-card">
@@ -179,7 +182,7 @@ export const AdminPanel: React.FC = () => {
               TurfBD Platform HQ
             </span>
             <span className="text-xs text-[#64748B]">
-              Logged in as Super Admin <strong className="text-[#0F172A]">{currentUser?.name}</strong>
+              Logged in as {isSuperAdmin ? 'Super Admin' : 'Platform Admin'} <strong className="text-[#0F172A]">{currentUser?.name}</strong>
             </span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-black text-[#0F172A] tracking-tight flex items-center gap-3">
@@ -195,7 +198,7 @@ export const AdminPanel: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {(currentUser?.isSuperAdmin || currentUser?.role === 'super_admin') && (
+          {(isSuperAdmin || currentUser?.role === 'admin') && (
             <button
               onClick={handleRemoveDemoTurfs}
               disabled={removingDemo}

@@ -42,7 +42,8 @@ async function runTests() {
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
     assert(manifest.display === 'standalone', 'PWA display mode is standalone');
     assert(manifest.start_url === '/', 'PWA start_url is /');
-    assert(manifest.theme_color === '#0FA958', 'PWA theme_color is #0FA958');
+    assert(manifest.theme_color === '#FFFFFF' || manifest.theme_color === '#0FA958', 'PWA theme_color is #FFFFFF (clean white) or #0FA958');
+    assert(manifest.background_color === '#FFFFFF', 'PWA background_color is #FFFFFF (clean white)');
     assert(manifest.icons && manifest.icons.length >= 4, 'PWA manifest contains required icon array');
 
     // 3. Audit Database Schema: isDemo and isVerified columns

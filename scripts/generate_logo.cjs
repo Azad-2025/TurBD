@@ -190,15 +190,44 @@ async function main() {
   await sharp(svgBuf).resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toFile(path.join(publicDir, 'apple-touch-icon.png'));
   await sharp(svgBuf).resize(32, 32, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toFile(path.join(publicDir, 'favicon-32x32.png'));
 
+  // White-background PWA App Icons
+  const pwaStandardSvg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none">
+  <rect width="512" height="512" fill="#FFFFFF" />
+  <g transform="translate(76, 54) scale(0.72)">
+    ${svg.replace(/^<\?xml.*?\?>/i, '').replace(/^<svg[^>]*>/i, '').replace(/<\/svg>$/i, '')}
+  </g>
+</svg>`;
+
+  const pwaMaskableSvg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none">
+  <rect width="512" height="512" fill="#FFFFFF" />
+  <g transform="translate(106, 88) scale(0.60)">
+    ${svg.replace(/^<\?xml.*?\?>/i, '').replace(/^<svg[^>]*>/i, '').replace(/<\/svg>$/i, '')}
+  </g>
+</svg>`;
+
+  const standardBuf = Buffer.from(pwaStandardSvg);
+  const maskableBuf = Buffer.from(pwaMaskableSvg);
+
+  await sharp(standardBuf).resize(512, 512).png().toFile(path.join(publicDir, 'pwa-512x512.png'));
+  await sharp(standardBuf).resize(192, 192).png().toFile(path.join(publicDir, 'pwa-192x192.png'));
+  await sharp(maskableBuf).resize(512, 512).png().toFile(path.join(publicDir, 'pwa-maskable-512x512.png'));
+  await sharp(standardBuf).resize(180, 180).png().toFile(path.join(publicDir, 'apple-touch-icon.png'));
+
   // Also sync to dist if dist exists
   if (fs.existsSync(distDir)) {
     await sharp(svgBuf).resize(1000, 1120).png().toFile(path.join(distDir, 'turflogo.png'));
     await sharp(svgBuf).resize(1000, 1120).png().toFile(path.join(distDir, 'logo.png'));
     await sharp(svgBuf).resize(1000, 1120).png().toFile(path.join(distDir, 'logo-dark.png'));
+    await sharp(standardBuf).resize(512, 512).png().toFile(path.join(distDir, 'pwa-512x512.png'));
+    await sharp(standardBuf).resize(192, 192).png().toFile(path.join(distDir, 'pwa-192x192.png'));
+    await sharp(maskableBuf).resize(512, 512).png().toFile(path.join(distDir, 'pwa-maskable-512x512.png'));
+    await sharp(standardBuf).resize(180, 180).png().toFile(path.join(distDir, 'apple-touch-icon.png'));
     fs.writeFileSync(path.join(distDir, 'turflogo.svg'), svg);
   }
 
-  console.log('Logo generated successfully!');
+  console.log('Logo & white-tile PWA icons generated successfully!');
 }
 
 main().catch(err => {

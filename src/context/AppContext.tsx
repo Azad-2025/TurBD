@@ -392,6 +392,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (typeof window !== 'undefined') {
       sessionStorage.setItem('turfbd_logged_out', '1');
       sessionStorage.removeItem('turfbd_active_tab');
+      localStorage.removeItem('turfbd_auth_token');
+      localStorage.removeItem('turfbd_refresh_token');
     }
     await api.logout();
     setCurrentUser(null);
