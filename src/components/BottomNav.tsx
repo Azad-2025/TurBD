@@ -55,10 +55,10 @@ export const BottomNav: React.FC = () => {
       className="fixed bottom-0 left-0 right-0 z-40 md:hidden bg-white/95 dark:bg-[#0B1315]/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 shadow-[0_-4px_16px_rgba(0,0,0,0.06)] pb-[max(6px,env(safe-area-inset-bottom,0px))] transition-colors"
     >
       {/* Role shortcut banner if user is owner or admin */}
-      {currentUser && (currentUser.role === 'owner' || currentUser.role === 'admin') && (
+      {currentUser && (currentUser.role === 'owner' || currentUser.role === 'admin' || currentUser.role === 'super_admin') && (
         <div className="bg-emerald-50 dark:bg-emerald-950/50 border-b border-emerald-100 dark:border-emerald-900/50 px-4 py-1.5 flex items-center justify-between text-[11px] text-emerald-800 dark:text-emerald-300">
           <span className="flex items-center gap-1.5 font-semibold">
-            {currentUser.role === 'admin' ? (
+            {currentUser.role === 'admin' || currentUser.role === 'super_admin' ? (
               <>
                 <ShieldAlert className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
                 <span>Super Admin</span>
@@ -72,7 +72,7 @@ export const BottomNav: React.FC = () => {
           </span>
           <button
             onClick={() =>
-              setActiveTab(currentUser.role === 'admin' ? 'admin-panel' : 'owner-dashboard')
+              setActiveTab(currentUser.role === 'admin' || currentUser.role === 'super_admin' ? 'admin-panel' : 'owner-dashboard')
             }
             className="text-[#0FA958] font-bold hover:underline"
           >

@@ -195,7 +195,7 @@ export const AdminPanel: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {currentUser?.isSuperAdmin && (
+          {(currentUser?.isSuperAdmin || currentUser?.role === 'super_admin') && (
             <button
               onClick={handleRemoveDemoTurfs}
               disabled={removingDemo}
@@ -937,7 +937,7 @@ export const AdminPanel: React.FC = () => {
                       >
                         <option value="customer">Customer</option>
                         <option value="owner">Turf Owner</option>
-                        {currentUser?.isSuperAdmin && (
+                        {(currentUser?.isSuperAdmin || currentUser?.role === 'super_admin') && (
                           <option value="admin">Platform Admin</option>
                         )}
                       </select>

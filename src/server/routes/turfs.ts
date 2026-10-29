@@ -698,7 +698,7 @@ router.get('/:id', optionalAuth, async (req: Request, res: Response) => {
 
     // Security check: unapproved, rejected, or suspended venues are private to admin and the owning host
     if (turf.verificationStatus && turf.verificationStatus !== 'approved') {
-      const isAuthorized = req.user && (req.user.role === 'admin' || req.user.id === turf.ownerId);
+      const isAuthorized = req.user && (req.user.role === 'admin' || req.user.role === 'super_admin' || req.user.id === turf.ownerId);
       if (!isAuthorized) {
         return res.status(404).json({ error: 'Turf not found' });
       }
@@ -792,7 +792,7 @@ router.post('/', requireOwner, async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'turfName, address, city, and pricePerHour are required' });
     }
 
-    const verifiedOwnerId = req.user!.role === 'admin' && ownerId ? Number(ownerId) : req.user!.id;
+    const verifiedOwnerId = (req.user!.role === 'admin' || req.user!.role === 'super_admin') && ownerId ? Number(ownerId) : req.user!.id;
 
     const [newTurf] = await db
       .insert(turfs)
@@ -806,7 +806,7 @@ router.post('/', requireOwner, async (req: Request, res: Response) => {
         latitude: latitude ? Number(latitude) : 23.8103,
         longitude: longitude ? Number(longitude) : 90.4125,
         venueType: venueType || 'outdoor',
-        verifiedBadge: req.user!.role === 'admin' && verifiedBadge ? verifiedBadge : 'standard',
+        verifiedBadge: (req.user!.role === 'admin' || req.user!.role === 'super_admin') && verifiedBadge ? verifiedBadge : 'standard',
         images: Array.isArray(images) && images.length > 0 ? images : ['https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=1200&q=80'],
         sportType: Array.isArray(sportType) ? sportType : ['football'],
         surfaceType: surfaceType || '50mm FIFA Quality Pro Turf',
@@ -888,9 +888,10 @@ router.patch('/:id', requireOwner, async (req: Request, res: Response) => {
     if (req.body.amenities !== undefined) updates.amenities = req.body.amenities;
     if (req.body.images !== undefined) updates.images = req.body.images;
     
-    // Only admin can change verification status & verified badge tier
+    // Only admin or super_admin can change verification status & verified badge tier
     let statusChanged = false;
-    if (req.body.verificationStatus !== undefined && req.user!.role === 'admin') {
+    const isPlatformAdmin = req.user!.role === 'admin' || req.user!.role === 'super_admin';
+    if (req.body.verificationStatus !== undefined && isPlatformAdmin) {
       const newStatus = req.body.verificationStatus;
       if (!['pending', 'approved', 'rejected', 'suspended'].includes(newStatus)) {
         return res.status(400).json({ error: 'Invalid verificationStatus. Must be pending, approved, rejected, or suspended' });
@@ -917,13 +918,13 @@ router.patch('/:id', requireOwner, async (req: Request, res: Response) => {
       }
       statusChanged = newStatus !== existing.verificationStatus;
     }
-    if (req.body.verifiedBadge !== undefined && req.user!.role === 'admin') {
+    if (req.body.verifiedBadge !== undefined && isPlatformAdmin) {
       if (!['standard', 'turfbd_verified', 'gold_partner'].includes(req.body.verifiedBadge)) {
         return res.status(400).json({ error: 'Invalid verifiedBadge. Must be standard, turfbd_verified, or gold_partner' });
       }
       updates.verifiedBadge = req.body.verifiedBadge;
     }
-    if (req.body.isFeatured !== undefined && req.user!.role === 'admin') {
+    if (req.body.isFeatured !== undefined && isPlatformAdmin) {
       updates.isFeatured = Boolean(req.body.isFeatured);
     }
 

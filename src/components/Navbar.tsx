@@ -134,7 +134,7 @@ export const Navbar: React.FC = () => {
               </button>
 
               {/* Turf Owner Portal (Visible if approved owner, admin, or previewing owner) */}
-              {(previewRole === 'owner' || (currentUser && (currentUser.role === 'owner' || currentUser.role === 'admin'))) && previewRole !== 'customer' && (
+              {(previewRole === 'owner' || (currentUser && (currentUser.role === 'owner' || currentUser.role === 'admin' || currentUser.role === 'super_admin'))) && previewRole !== 'customer' && (
                 <button
                   onClick={() => setActiveTab('owner-dashboard')}
                   className={`px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
@@ -150,7 +150,7 @@ export const Navbar: React.FC = () => {
               )}
 
               {/* Admin Command Center (Restricted to actual admin accounts, hidden in preview) */}
-              {currentUser && currentUser.role === 'admin' && !previewRole && (
+              {currentUser && (currentUser.role === 'admin' || currentUser.role === 'super_admin') && !previewRole && (
                 <button
                   onClick={() => setActiveTab('admin-panel')}
                   className={`px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
@@ -166,7 +166,7 @@ export const Navbar: React.FC = () => {
               )}
 
               {/* Super Admin Safe View Preview Selector */}
-              {currentUser && currentUser.role === 'admin' && currentUser.isSuperAdmin && (
+              {currentUser && (currentUser.role === 'admin' || currentUser.role === 'super_admin') && (currentUser.isSuperAdmin || currentUser.role === 'super_admin') && (
                 <div className="relative">
                   <button
                     onClick={() => setIsPreviewMenuOpen(!isPreviewMenuOpen)}
@@ -233,7 +233,7 @@ export const Navbar: React.FC = () => {
             {/* Right Side: PWA Button, Windows App Button, Notifications, Real Role Badge, Profile & Logout */}
             <div className="flex items-center gap-2.5">
               {/* Gate Check-In Quick Button for Owners & Admins */}
-              {currentUser && (currentUser.role === 'owner' || currentUser.role === 'admin') && (
+              {currentUser && (currentUser.role === 'owner' || currentUser.role === 'admin' || currentUser.role === 'super_admin') && (
                 <button
                   onClick={() => setIsGateCheckInOpen(true)}
                   className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold text-[#064E3B] dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 border border-emerald-200 dark:border-emerald-800 transition-colors cursor-pointer shadow-2xs"
@@ -265,7 +265,7 @@ export const Navbar: React.FC = () => {
               {currentUser && (
                 <div
                   className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${
-                    currentUser.role === 'admin'
+                    currentUser.role === 'admin' || currentUser.role === 'super_admin'
                       ? 'bg-purple-50 dark:bg-purple-950/50 border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300'
                       : currentUser.role === 'owner'
                       ? 'bg-amber-50 dark:bg-amber-950/50 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300'
@@ -275,7 +275,7 @@ export const Navbar: React.FC = () => {
                 >
                   <span
                     className={`w-1.5 h-1.5 rounded-full ${
-                      currentUser.role === 'admin'
+                      currentUser.role === 'admin' || currentUser.role === 'super_admin'
                         ? 'bg-purple-500'
                         : currentUser.role === 'owner'
                         ? 'bg-amber-500'
@@ -283,8 +283,8 @@ export const Navbar: React.FC = () => {
                     }`}
                   />
                   <span>
-                    {currentUser.role === 'admin'
-                      ? currentUser.isSuperAdmin
+                    {currentUser.role === 'admin' || currentUser.role === 'super_admin'
+                      ? currentUser.role === 'super_admin' || currentUser.isSuperAdmin
                         ? 'Super Admin'
                         : 'Platform Admin'
                       : currentUser.role === 'owner'
@@ -366,7 +366,7 @@ export const Navbar: React.FC = () => {
         {isGateCheckInOpen && (
           <GateCheckInModal
             turfs={
-              currentUser?.role === 'admin'
+              currentUser?.role === 'admin' || currentUser?.role === 'super_admin'
                 ? turfs
                 : turfs.filter((t) => t.ownerId === currentUser?.id)
             }

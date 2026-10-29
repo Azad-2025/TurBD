@@ -148,7 +148,7 @@ export async function requireOwner(req: Request, res: Response, next: NextFuncti
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required.' });
     }
-    if (req.user.role === 'admin') {
+    if (req.user.role === 'admin' || req.user.role === 'super_admin') {
       return next();
     }
     if (req.user.role !== 'owner') {
@@ -178,14 +178,14 @@ export async function requireOwner(req: Request, res: Response, next: NextFuncti
 
 /**
  * requireAdmin middleware:
- * Ensures the authenticated user has verified 'admin' role in the database.
+ * Ensures the authenticated user has verified 'admin' or 'super_admin' role in the database.
  */
 export async function requireAdmin(req: Request, res: Response, next: NextFunction) {
   const checkRole = () => {
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required.' });
     }
-    if (req.user.role !== 'admin') {
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
       return res.status(403).json({ error: 'Forbidden: Platform Admin privileges required.' });
     }
     return next();
@@ -203,7 +203,7 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
 
 /**
  * requireSuperAdmin middleware:
- * Strictly ensures the authenticated user is an authorized Super Admin (role === 'admin' and isSuperAdmin === true).
+ * Strictly ensures the authenticated user is an authorized Super Admin (role === 'super_admin' or (role === 'admin' and isSuperAdmin === true)).
  * Ordinary Admins, Owners, and Customers are rejected with 403 Forbidden.
  * Protects administrative account creation, role promotions, and privilege elevation.
  */
@@ -212,7 +212,8 @@ export async function requireSuperAdmin(req: Request, res: Response, next: NextF
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required.', code: 'UNAUTHENTICATED' });
     }
-    if (req.user.role !== 'admin' || !req.user.isSuperAdmin) {
+    const isSuper = req.user.role === 'super_admin' || (req.user.role === 'admin' && Boolean(req.user.isSuperAdmin));
+    if (!isSuper) {
       return res.status(403).json({
         error: 'Forbidden: Super Administrator authorization required to manage Admin roles.',
         code: 'SUPER_ADMIN_REQUIRED',

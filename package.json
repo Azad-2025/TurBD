@@ -30,6 +30,7 @@
     "test:cloudinary-storage": "tsx scripts/test_cloudinary_storage.ts",
     "test:pwa-mobile": "tsx scripts/test_mobile_pwa_install.ts",
     "test:demo-pwa": "tsx scripts/test_demo_turfs_and_pwa.ts",
+    "test:super-admins": "tsx scripts/test_hardcoded_super_admins.ts",
     "desktop:build": "npm run build && echo 'Desktop bundle ready in dist/'"
   },
   "dependencies": {

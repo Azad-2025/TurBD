@@ -133,7 +133,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const setPreviewRole = (role: 'customer' | 'owner' | null) => {
-    if (currentUser?.role !== 'admin' || !currentUser?.isSuperAdmin) {
+    if ((currentUser?.role !== 'admin' && currentUser?.role !== 'super_admin') || !currentUser?.isSuperAdmin) {
       setPreviewRoleState(null);
       return;
     }
@@ -204,7 +204,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             // Restore role view if user didn't explicitly pick a sub-page
             const savedTab = typeof window !== 'undefined' ? sessionStorage.getItem('turfbd_active_tab') : null;
             if (!savedTab || savedTab === 'home' || savedTab === 'browse') {
-              if (me.role === 'admin') {
+              if (me.role === 'admin' || me.role === 'super_admin') {
                 setActiveTab('admin-panel');
               } else if (me.role === 'owner') {
                 setActiveTab('owner-dashboard');
@@ -269,7 +269,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setCurrentUser(user);
           setIsAuthModalOpen(false);
           // Route user to appropriate interface based on server-authoritative role
-          if (user.role === 'admin') {
+          if (user.role === 'admin' || user.role === 'super_admin') {
             setActiveTab('admin-panel');
           } else if (user.role === 'owner') {
             setActiveTab('owner-dashboard');
@@ -373,7 +373,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const loggedUser = await api.login(email, password);
       setCurrentUser(loggedUser);
       setIsAuthModalOpen(false);
-      if (loggedUser.role === 'admin') {
+      if (loggedUser.role === 'admin' || loggedUser.role === 'super_admin') {
         setActiveTab('admin-panel');
       } else if (loggedUser.role === 'owner') {
         setActiveTab('owner-dashboard');
@@ -455,7 +455,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const { user } = await api.verifyOtp(phone, code, name, role);
       setCurrentUser(user);
       setIsAuthModalOpen(false);
-      if (user.role === 'admin') {
+      if (user.role === 'admin' || user.role === 'super_admin') {
         setActiveTab('admin-panel');
       } else if (user.role === 'owner') {
         setActiveTab('owner-dashboard');

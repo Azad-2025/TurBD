@@ -1,4 +1,4 @@
-export type UserRole = 'customer' | 'player' | 'owner' | 'admin';
+export type UserRole = 'customer' | 'player' | 'owner' | 'admin' | 'super_admin';
 export type OwnerVerificationStatus = 'pending' | 'approved' | 'rejected' | 'suspended';
 
 export interface User {
@@ -12,6 +12,7 @@ export interface User {
   favoriteTurfs?: number[];
   isEmailVerified?: boolean;
   isPhoneVerified?: boolean;
+  isVerified?: boolean;
   googleId?: string;
   facebookId?: string;
   // Phase 8: Owner verification fields

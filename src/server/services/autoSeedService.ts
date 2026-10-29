@@ -1,5 +1,6 @@
 import { db } from '../../db/index.ts';
 import { sql } from 'drizzle-orm';
+import bcrypt from 'bcryptjs';
 
 /**
  * Direct Raw SQL Schema Repair.
@@ -11,18 +12,24 @@ import { sql } from 'drizzle-orm';
 export async function ensureTurfSchemaColumns(): Promise<void> {
   try {
     // 1. Ensure core users table exists
-    await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        name TEXT NOT NULL,
-        phone TEXT NOT NULL,
-        email TEXT NOT NULL UNIQUE,
-        password_hash TEXT NOT NULL,
-        role TEXT NOT NULL DEFAULT 'customer',
-        is_super_admin BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
-      );
-    `);
+    try {
+      await db.execute(sql`
+        CREATE TABLE IF NOT EXISTS users (
+          id SERIAL PRIMARY KEY,
+          name TEXT NOT NULL,
+          phone TEXT NOT NULL,
+          email TEXT NOT NULL UNIQUE,
+          password_hash TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'customer',
+          is_super_admin BOOLEAN DEFAULT FALSE,
+          is_email_verified BOOLEAN DEFAULT FALSE,
+          is_phone_verified BOOLEAN DEFAULT FALSE,
+          created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
+        );
+      `);
+    } catch {
+      // Ignore if already created or owned by another role
+    }
 
     // 2. Safely relax owner_id constraint so initial seeding never fails on foreign key mismatch
     await db.execute(sql`
@@ -58,7 +65,7 @@ export async function ensureTurfSchemaColumns(): Promise<void> {
     await db.execute(sql`ALTER TABLE turfs ADD COLUMN IF NOT EXISTS amenities JSONB DEFAULT '["Floodlights", "Changing Room", "Parking"]'::jsonb;`);
     await db.execute(sql`ALTER TABLE turfs ADD COLUMN IF NOT EXISTS is_featured BOOLEAN DEFAULT FALSE;`);
 
-    console.log('[AutoSeed] Successfully executed direct raw SQL schema repairs on turfs table.');
+    console.log('[AutoSeed] Successfully executed direct raw SQL schema repairs on turfs and users tables.');
   } catch (error: any) {
     console.warn('[AutoSeed] Direct raw SQL schema repair notice:', error?.message || error);
   }
@@ -79,7 +86,30 @@ export async function autoSeedDatabase(force: boolean = false): Promise<{ seeded
     // 1. Direct Raw SQL Schema Repair
     await ensureTurfSchemaColumns();
 
-    // 2. Check row count using Raw SQL
+    // 2. Ensure the 2 hardcoded Super Admin accounts exist and are verified with role='super_admin'
+    try {
+      const salt = await bcrypt.genSalt(10);
+      const hash1 = await bcrypt.hash('Super@dmin01', salt);
+      const hash2 = await bcrypt.hash('Super@dmin02', salt);
+
+      await db.execute(sql`
+        INSERT INTO users (name, phone, email, password_hash, role, is_super_admin, is_email_verified, is_phone_verified)
+        VALUES 
+          ('Super Admin', '+8801631000001', 'salahuddinazad01631@gmail.com', ${hash1}, 'super_admin', true, true, true),
+          ('Super Admin', '+8801700000002', 'sharafatrahman4112003@gmail.com', ${hash2}, 'super_admin', true, true, true)
+        ON CONFLICT (email) DO UPDATE SET
+          role = 'super_admin',
+          is_super_admin = true,
+          is_email_verified = true,
+          is_phone_verified = true,
+          password_hash = EXCLUDED.password_hash;
+      `);
+      console.log('[AutoSeed] Verified and synced the 2 Super Admin accounts.');
+    } catch (superAdminErr: any) {
+      console.warn('[AutoSeed] Super Admin seeding notice:', superAdminErr?.message || superAdminErr);
+    }
+
+    // 3. Check row count using Raw SQL
     let currentCount = 0;
     try {
       const countCheck = await db.execute(sql`SELECT COUNT(*)::int AS cnt FROM turfs;`);

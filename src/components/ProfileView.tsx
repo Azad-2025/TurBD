@@ -343,7 +343,7 @@ export const ProfileView: React.FC = () => {
                 <h1 className="text-xl font-black text-[#0F172A]">{currentUser.name}</h1>
                 <div className="flex items-center justify-center sm:justify-start gap-2 mt-1">
                   <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider bg-emerald-50 text-[#064E3B] border border-emerald-200">
-                    {currentUser.role === 'admin' ? 'Super Admin' : currentUser.role === 'owner' ? 'Turf Owner' : 'Player / Customer'}
+                    {currentUser.role === 'admin' || currentUser.role === 'super_admin' ? 'Super Admin' : currentUser.role === 'owner' ? 'Turf Owner' : 'Player / Customer'}
                   </span>
                   <span className="text-xs text-[#64748B] flex items-center gap-1">
                     <MapPin className="w-3 h-3 text-[#0FA958]" />
@@ -511,8 +511,8 @@ export const ProfileView: React.FC = () => {
               <ChevronRight className="w-4 h-4 text-slate-400" />
             </button>
 
-            {/* Turf Owner Portal shortcut (Only for verified Owner/Admin) */}
-            {(currentUser.role === 'owner' || currentUser.role === 'admin') && (
+            {/* Turf Owner Portal shortcut (Only for verified Owner/Admin/Super Admin) */}
+            {(currentUser.role === 'owner' || currentUser.role === 'admin' || currentUser.role === 'super_admin') && (
               <button
                 onClick={() => setActiveTab('owner-dashboard')}
                 className="w-full px-4 py-3.5 flex items-center justify-between hover:bg-slate-50 transition-colors text-left cursor-pointer"
@@ -530,8 +530,8 @@ export const ProfileView: React.FC = () => {
               </button>
             )}
 
-            {/* Super Admin Panel shortcut (Only for verified Super Admin) */}
-            {currentUser.role === 'admin' && (
+            {/* Super Admin Panel shortcut (Only for verified Admin/Super Admin) */}
+            {(currentUser.role === 'admin' || currentUser.role === 'super_admin') && (
               <button
                 onClick={() => setActiveTab('admin-panel')}
                 className="w-full px-4 py-3.5 flex items-center justify-between hover:bg-slate-50 transition-colors text-left cursor-pointer"
