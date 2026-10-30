@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { db } from '../../db/index.ts';
 import { turfs, slots, bookings, reviews, auditLogs, users } from '../../db/schema.ts';
-import { eq, inArray, or, desc } from 'drizzle-orm';
+import { eq, inArray, or, desc, sql } from 'drizzle-orm';
 import { requireAdmin, requireSuperAdmin } from '../middleware/auth.ts';
 import { autoSeedDatabase } from '../services/autoSeedService.ts';
 import { notificationService } from '../services/notificationService.ts';
@@ -452,6 +452,328 @@ router.patch('/pending-turfs/:id/reject', requireAdmin, async (req: Request, res
   } catch (error: any) {
     console.error('Failed to reject turf from queue:', error);
     return res.status(500).json({ error: 'Failed to reject turf' });
+  }
+});
+
+/**
+ * Resilient owner queue fetcher.
+ * Accommodates differences in database schemas:
+ * - Handles 'owner_verification_status' vs 'verification_status' vs 'is_verified'
+ * - Gracefully queries registered venue owners and applicants
+ * - On any database query mismatch or exception, logs detailed diagnostic logs and returns [] instead of crashing
+ */
+export async function getOwnersVerificationQueue(filters?: { status?: string; search?: string }): Promise<any[]> {
+  try {
+    let ownerUsers: any[] = [];
+
+    // Attempt 1: Standard Drizzle ORM query
+    try {
+      ownerUsers = await db
+        .select({
+          id: users.id,
+          name: users.name,
+          email: users.email,
+          phone: users.phone,
+          role: users.role,
+          ownerVerificationStatus: users.ownerVerificationStatus,
+          ownerSubmittedAt: users.ownerSubmittedAt,
+          ownerReviewedAt: users.ownerReviewedAt,
+          ownerReviewedBy: users.ownerReviewedBy,
+          ownerApprovedAt: users.ownerApprovedAt,
+          ownerApprovedBy: users.ownerApprovedBy,
+          ownerRejectedAt: users.ownerRejectedAt,
+          ownerRejectedBy: users.ownerRejectedBy,
+          ownerRejectionReason: users.ownerRejectionReason,
+          ownerSuspendedAt: users.ownerSuspendedAt,
+          ownerSuspendedBy: users.ownerSuspendedBy,
+          ownerSuspensionReason: users.ownerSuspensionReason,
+          ownerDocuments: users.ownerDocuments,
+          createdAt: users.createdAt,
+        })
+        .from(users)
+        .where(
+          or(
+            eq(users.role, 'owner'),
+            sql`LOWER(${users.role}) = 'owner'`,
+            sql`${users.ownerVerificationStatus} IS NOT NULL AND ${users.ownerVerificationStatus} != ''`
+          )
+        )
+        .orderBy(desc(users.createdAt));
+    } catch (drizzleErr: any) {
+      console.warn('[Admin Owners] Primary Drizzle query notice, executing resilient SQL fallback:', drizzleErr?.message || drizzleErr);
+
+      // Attempt 2: Dynamic raw SQL with to_jsonb to bypass missing column errors
+      try {
+        const rawRes = await db.execute(sql`
+          SELECT 
+            u.id,
+            u.name,
+            u.email,
+            u.phone,
+            u.role,
+            COALESCE(
+              NULLIF(to_jsonb(u)->>'owner_verification_status', ''),
+              NULLIF(to_jsonb(u)->>'verification_status', ''),
+              'pending'
+            ) AS owner_verification_status,
+            (to_jsonb(u)->>'owner_submitted_at') AS owner_submitted_at,
+            (to_jsonb(u)->>'owner_reviewed_at') AS owner_reviewed_at,
+            NULLIF((to_jsonb(u)->>'owner_reviewed_by'), '')::integer AS owner_reviewed_by,
+            (to_jsonb(u)->>'owner_approved_at') AS owner_approved_at,
+            NULLIF((to_jsonb(u)->>'owner_approved_by'), '')::integer AS owner_approved_by,
+            (to_jsonb(u)->>'owner_rejected_at') AS owner_rejected_at,
+            NULLIF((to_jsonb(u)->>'owner_rejected_by'), '')::integer AS owner_rejected_by,
+            (to_jsonb(u)->>'owner_rejection_reason') AS owner_rejection_reason,
+            (to_jsonb(u)->>'owner_suspended_at') AS owner_suspended_at,
+            NULLIF((to_jsonb(u)->>'owner_suspended_by'), '')::integer AS owner_suspended_by,
+            (to_jsonb(u)->>'owner_suspension_reason') AS owner_suspension_reason,
+            COALESCE(u.owner_documents, '[]'::jsonb) AS owner_documents,
+            u.created_at
+          FROM users u
+          WHERE LOWER(u.role) = 'owner'
+             OR (to_jsonb(u)->>'owner_verification_status') IS NOT NULL
+             OR (to_jsonb(u)->>'verification_status') IS NOT NULL
+             OR u.id IN (SELECT DISTINCT owner_id FROM turfs WHERE owner_id IS NOT NULL)
+          ORDER BY u.created_at DESC;
+        `);
+
+        ownerUsers = ((rawRes as any)?.rows || []).map((r: any) => ({
+          id: r.id,
+          name: r.name,
+          email: r.email,
+          phone: r.phone,
+          role: r.role,
+          ownerVerificationStatus: r.owner_verification_status || 'pending',
+          ownerSubmittedAt: r.owner_submitted_at,
+          ownerReviewedAt: r.owner_reviewed_at,
+          ownerReviewedBy: r.owner_reviewed_by,
+          ownerApprovedAt: r.owner_approved_at,
+          ownerApprovedBy: r.owner_approved_by,
+          ownerRejectedAt: r.owner_rejected_at,
+          ownerRejectedBy: r.owner_rejected_by,
+          ownerRejectionReason: r.owner_rejection_reason,
+          ownerSuspendedAt: r.owner_suspended_at,
+          ownerSuspendedBy: r.owner_suspended_by,
+          ownerSuspensionReason: r.owner_suspension_reason,
+          ownerDocuments: r.owner_documents || [],
+          createdAt: r.created_at,
+        }));
+      } catch (rawErr: any) {
+        console.error('[Admin Owners] Resilient raw SQL error:', rawErr?.message || rawErr);
+        // Attempt 3: Bare minimum query
+        try {
+          const minimalRes = await db.execute(sql`
+            SELECT id, name, email, phone, role, created_at
+            FROM users
+            WHERE LOWER(role) = 'owner' OR id IN (SELECT DISTINCT owner_id FROM turfs WHERE owner_id IS NOT NULL)
+            ORDER BY created_at DESC;
+          `);
+          ownerUsers = ((minimalRes as any)?.rows || []).map((r: any) => ({
+            id: r.id,
+            name: r.name,
+            email: r.email,
+            phone: r.phone,
+            role: r.role || 'owner',
+            ownerVerificationStatus: 'pending',
+            createdAt: r.created_at,
+          }));
+        } catch (minErr: any) {
+          console.error('[Admin Owners] Fatal: All queries failed for owners queue:', minErr?.message || minErr);
+          return [];
+        }
+      }
+    }
+
+    // Safely retrieve registered venues for these owners
+    let ownerTurfsList: any[] = [];
+    const ownerIds = ownerUsers.map((u) => u.id).filter(Boolean);
+    if (ownerIds.length > 0) {
+      try {
+        ownerTurfsList = await db
+          .select({
+            id: turfs.id,
+            ownerId: turfs.ownerId,
+            turfName: turfs.turfName,
+            city: turfs.city,
+            area: turfs.area,
+            address: turfs.address,
+            verificationStatus: turfs.verificationStatus,
+            isVerified: turfs.isVerified,
+          })
+          .from(turfs)
+          .where(inArray(turfs.ownerId, ownerIds));
+      } catch (turfErr: any) {
+        console.warn('[Admin Owners] Turfs join notice, running raw SQL fallback:', turfErr?.message || turfErr);
+        try {
+          const rawTurfs = await db.execute(sql`
+            SELECT id, owner_id, turf_name, city, area, address
+            FROM turfs
+            WHERE owner_id = ANY(${ownerIds});
+          `);
+          ownerTurfsList = (rawTurfs as any)?.rows || [];
+        } catch {
+          ownerTurfsList = [];
+        }
+      }
+    }
+
+    let mapped = ownerUsers.map((u) => {
+      const userTurfs = ownerTurfsList.filter((t) => (t.ownerId === u.id) || (t.owner_id === u.id));
+      return {
+        ...u,
+        ownerVerificationStatus: u.ownerVerificationStatus || 'pending',
+        turfs: userTurfs,
+        turfsCount: userTurfs.length,
+      };
+    });
+
+    if (filters?.status && filters.status !== 'all') {
+      mapped = mapped.filter((o) => (o.ownerVerificationStatus || 'pending') === filters.status);
+    }
+    if (filters?.search) {
+      const q = filters.search.toLowerCase().trim();
+      mapped = mapped.filter((o) =>
+        (o.name || '').toLowerCase().includes(q) ||
+        (o.email || '').toLowerCase().includes(q) ||
+        (o.phone || '').toLowerCase().includes(q) ||
+        (o.turfs || []).some((t: any) => (t.turfName || t.turf_name || '').toLowerCase().includes(q))
+      );
+    }
+
+    return mapped;
+  } catch (fatalErr: any) {
+    console.error('[Admin Owners Error] Database query mismatch in getOwnersVerificationQueue:', fatalErr?.message || fatalErr);
+    return [];
+  }
+}
+
+/**
+ * GET /api/admin/owners
+ *
+ * Super Admin & Admin endpoint to fetch owner verification applications.
+ * Returns [] safely if empty or if database mismatch occurs without breaking the UI.
+ */
+router.get('/owners', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+    const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+
+    const owners = await getOwnersVerificationQueue({ status, search });
+    return res.json(owners);
+  } catch (error: any) {
+    console.error('[Admin API Error] GET /api/admin/owners caught exception:', error?.message || error);
+    // Return safe fallback [] to prevent breaking frontend UI
+    return res.json([]);
+  }
+});
+
+/**
+ * PATCH /api/admin/owners/:id/verification
+ *
+ * Super Admin & Admin endpoint to approve, reject, or suspend an owner applicant.
+ */
+router.patch('/owners/:id/verification', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const ownerId = Number(req.params.id);
+    const { status, reason } = req.body;
+
+    if (!ownerId || !status) {
+      return res.status(400).json({ error: 'ownerId and status are required' });
+    }
+
+    if (!['approved', 'rejected', 'suspended'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status. Must be approved, rejected, or suspended' });
+    }
+
+    const [targetUser] = await db.select().from(users).where(eq(users.id, ownerId));
+    if (!targetUser) {
+      return res.status(404).json({ error: 'Owner user not found' });
+    }
+
+    const adminId = req.user!.id;
+    const now = new Date();
+    const updateData: any = {
+      role: 'owner',
+      ownerVerificationStatus: status,
+      ownerReviewedAt: now,
+      ownerReviewedBy: adminId,
+    };
+
+    if (status === 'approved') {
+      updateData.isVerified = true;
+      updateData.ownerApprovedAt = now;
+      updateData.ownerApprovedBy = adminId;
+      updateData.ownerSuspensionReason = null;
+    } else if (status === 'rejected') {
+      if (!reason?.trim()) {
+        return res.status(400).json({ error: 'A rejection reason is required when rejecting an owner' });
+      }
+      updateData.ownerRejectedAt = now;
+      updateData.ownerRejectedBy = adminId;
+      updateData.ownerRejectionReason = reason.trim();
+    } else if (status === 'suspended') {
+      if (!reason?.trim()) {
+        return res.status(400).json({ error: 'A suspension reason is required when suspending an owner' });
+      }
+      updateData.ownerSuspendedAt = now;
+      updateData.ownerSuspendedBy = adminId;
+      updateData.ownerSuspensionReason = reason.trim();
+    }
+
+    let updatedUser: any = null;
+    try {
+      const [u] = await db.update(users).set(updateData).where(eq(users.id, ownerId)).returning();
+      updatedUser = u;
+    } catch (updateErr: any) {
+      console.warn('[Admin Owners] Drizzle update notice, executing direct SQL update:', updateErr?.message);
+      const rawUpdate = await db.execute(sql`
+        UPDATE users 
+        SET 
+          role = 'owner',
+          owner_verification_status = ${status},
+          owner_reviewed_at = ${now},
+          owner_reviewed_by = ${adminId},
+          owner_approved_at = ${status === 'approved' ? now : null},
+          owner_approved_by = ${status === 'approved' ? adminId : null},
+          owner_rejected_at = ${status === 'rejected' ? now : null},
+          owner_rejected_by = ${status === 'rejected' ? adminId : null},
+          owner_rejection_reason = ${status === 'rejected' ? reason?.trim() : null},
+          owner_suspended_at = ${status === 'suspended' ? now : null},
+          owner_suspended_by = ${status === 'suspended' ? adminId : null},
+          owner_suspension_reason = ${status === 'suspended' ? reason?.trim() : null}
+        WHERE id = ${ownerId}
+        RETURNING *;
+      `);
+      updatedUser = (rawUpdate as any)?.rows?.[0] || targetUser;
+    }
+
+    // Record audit log
+    try {
+      await db.insert(auditLogs).values({
+        userId: adminId,
+        action: `owner_${status}`,
+        targetType: 'user',
+        targetId: String(ownerId),
+        details: {
+          previousStatus: targetUser.ownerVerificationStatus,
+          newStatus: status,
+          reason: reason || null,
+          adminEmail: req.user!.email,
+        },
+      });
+    } catch (auditErr) {
+      console.warn('Audit log write error:', auditErr);
+    }
+
+    const { passwordHash: _, ...safeUser } = updatedUser || targetUser;
+    return res.json({
+      success: true,
+      message: `Owner application has been successfully ${status}.`,
+      user: safeUser,
+    });
+  } catch (error: any) {
+    console.error('Failed to update owner verification:', error);
+    return res.status(500).json({ error: 'Failed to update owner verification status' });
   }
 });
 

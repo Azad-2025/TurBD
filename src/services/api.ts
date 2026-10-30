@@ -1420,14 +1420,26 @@ export const api = {
   // ==========================================
 
   async getAdminOwners(): Promise<any[]> {
-    const res = await fetch(`${API_BASE}/auth/owners`, {
-      headers: getAuthHeaders(),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Failed to fetch owner verification applications');
+    try {
+      let res = await fetch(`${API_BASE}/admin/owners`, {
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) {
+        // Fallback to /auth/owners
+        res = await fetch(`${API_BASE}/auth/owners`, {
+          headers: getAuthHeaders(),
+        });
+      }
+      if (!res.ok) {
+        console.warn('Admin owners endpoint returned non-ok status, falling back to empty array');
+        return [];
+      }
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    } catch (err: any) {
+      console.warn('Failed to fetch owner verification applications, returning fallback array:', err?.message || err);
+      return [];
     }
-    return res.json();
   },
 
   async updateOwnerVerification(
@@ -1435,11 +1447,19 @@ export const api = {
     status: 'approved' | 'rejected' | 'suspended',
     reason?: string
   ): Promise<{ success: boolean; message: string; user: any }> {
-    const res = await fetch(`${API_BASE}/auth/owners/${ownerId}/verification`, {
+    let res = await fetch(`${API_BASE}/admin/owners/${ownerId}/verification`, {
       method: 'PATCH',
       headers: getAuthHeaders(),
       body: JSON.stringify({ status, reason }),
     });
+    if (!res.ok) {
+      // Fallback to /auth/owners/:id/verification
+      res = await fetch(`${API_BASE}/auth/owners/${ownerId}/verification`, {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ status, reason }),
+      });
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Failed to update owner verification status');

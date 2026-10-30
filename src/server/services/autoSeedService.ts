@@ -46,10 +46,14 @@ export async function ensureTurfSchemaColumns(): Promise<void> {
       END $$;
     `);
 
-    // 3. Direct Raw SQL column additions as required
+    // 3. Direct Raw SQL column additions as required for turfs
     await db.execute(sql`ALTER TABLE turfs ADD COLUMN IF NOT EXISTS is_demo BOOLEAN DEFAULT TRUE;`);
     await db.execute(sql`ALTER TABLE turfs ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT TRUE;`);
     await db.execute(sql`ALTER TABLE turfs ADD COLUMN IF NOT EXISTS verification_status VARCHAR DEFAULT 'approved';`);
+    await db.execute(sql`ALTER TABLE turfs ADD COLUMN IF NOT EXISTS rejection_reason TEXT;`);
+    await db.execute(sql`ALTER TABLE turfs ADD COLUMN IF NOT EXISTS suspension_reason TEXT;`);
+    await db.execute(sql`ALTER TABLE turfs ADD COLUMN IF NOT EXISTS reviewed_by INTEGER;`);
+    await db.execute(sql`ALTER TABLE turfs ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP;`);
 
     // 4. Ensure name, sports, and core discovery columns exist in PostgreSQL
     await db.execute(sql`ALTER TABLE turfs ADD COLUMN IF NOT EXISTS turf_name TEXT;`);
@@ -64,6 +68,24 @@ export async function ensureTurfSchemaColumns(): Promise<void> {
     await db.execute(sql`ALTER TABLE turfs ADD COLUMN IF NOT EXISTS surface_type TEXT DEFAULT '50mm Synthetic Turf';`);
     await db.execute(sql`ALTER TABLE turfs ADD COLUMN IF NOT EXISTS amenities JSONB DEFAULT '["Floodlights", "Changing Room", "Parking"]'::jsonb;`);
     await db.execute(sql`ALTER TABLE turfs ADD COLUMN IF NOT EXISTS is_featured BOOLEAN DEFAULT FALSE;`);
+
+    // 5. Ensure users table has all Owner Verification & Super Admin columns in PostgreSQL
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS owner_verification_status TEXT DEFAULT 'pending';`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_status TEXT DEFAULT 'pending';`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE;`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN DEFAULT FALSE;`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS owner_submitted_at TIMESTAMP;`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS owner_reviewed_at TIMESTAMP;`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS owner_reviewed_by INTEGER;`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS owner_approved_at TIMESTAMP;`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS owner_approved_by INTEGER;`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS owner_rejected_at TIMESTAMP;`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS owner_rejected_by INTEGER;`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS owner_rejection_reason TEXT;`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS owner_suspended_at TIMESTAMP;`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS owner_suspended_by INTEGER;`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS owner_suspension_reason TEXT;`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS owner_documents JSONB DEFAULT '[]'::jsonb;`);
 
     console.log('[AutoSeed] Successfully executed direct raw SQL schema repairs on turfs and users tables.');
   } catch (error: any) {

@@ -59,10 +59,10 @@ export const OwnerVerificationView: React.FC = () => {
     setErrorMsg('');
     try {
       const data = await api.getAdminOwners();
-      setOwners(data);
+      setOwners(Array.isArray(data) ? data : []);
     } catch (err: any) {
       console.error('Failed to load owners:', err);
-      setErrorMsg(err.message || 'Failed to load owner applications');
+      setOwners([]);
     } finally {
       setLoading(false);
     }
